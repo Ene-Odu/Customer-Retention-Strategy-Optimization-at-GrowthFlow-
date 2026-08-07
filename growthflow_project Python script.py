@@ -13,34 +13,28 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import streamlit as st
 
 
-# Load Data
-def load_data():
+@st.cache_data
+def load_and_merge_data():
+    # 1. Load individual datasets
     customers_df = pd.read_csv('gfcustomer_information.csv')
     status_df = pd.read_csv('gfmonthly_status.csv')
     usage_df = pd.read_csv('gfusage_data.csv')
     feedback_df = pd.read_csv('gffeedback_data.csv')
     engagement_df = pd.read_csv('gfengagement_data.csv')
-    return customers_df, status_df, usage_df, feedback_df, engagement_df
+    
+    # 2. Merge all datasets on customer_id
+    model_df = customers_df.merge(status_df, on='customer_id', how='inner') \
+                           .merge(usage_df, on='customer_id', how='inner') \
+                           .merge(feedback_df, on='customer_id', how='inner') \
+                           .merge(engagement_df, on='customer_id', how='inner')
+    
+    return model_df
 
-# Join tables
-model_df = customers_df.merge(status_df, on='customer_id', how='inner') \
-                       .merge(usage_df, on='customer_id', how='inner') \
-                       .merge(feedback_df, on='customer_id', how='inner') \
-                       .merge(engagement_df, on='customer_id', how='inner')
-
-print("✓ All 5 tables successfully written to SQLite database!")
-
-pd.read_sql('SELECT * FROM "gfcustomer_information" LIMIT 5;',conn)
-
-# Verify all tables and row counts in SQLite
-tables = ['gfcustomer_information', 'gfmonthly_status', 'gfusage_data', 'gffeedback_data', 'gfengagement_data']
-
-print("=== SQLITE TABLE VERIFICATION ===")
-for table in tables:
-    count = pd.read_sql_query(f"SELECT COUNT(*) AS total_rows FROM {table};", conn)['total_rows'][0]
-    print(f"Table: {table:<25} | Rows: {count:,}")
+# Call the cached function to generate model_df
+model_df = load_and_merge_data()
 
 # Dataset Overview
 
