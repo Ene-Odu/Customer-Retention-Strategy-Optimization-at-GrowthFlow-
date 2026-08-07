@@ -15,15 +15,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sqlite3
 
-from google.colab import files
-upload = files.upload()
 
 # Load Data
-customers_df = pd.read_csv('gfcustomer_information.csv')
-status_df = pd.read_csv('gfmonthly_status.csv')
-usage_df = pd.read_csv('gfusage_data.csv')
-feedback_df = pd.read_csv('gffeedback_data.csv')
-engagement_df = pd.read_csv('gfengagement_data.csv')
+def load_data():
+    customers_df = pd.read_csv('gfcustomer_information.csv')
+    status_df = pd.read_csv('gfmonthly_status.csv')
+    usage_df = pd.read_csv('gfusage_data.csv')
+    feedback_df = pd.read_csv('gffeedback_data.csv')
+    engagement_df = pd.read_csv('gfengagement_data.csv')
+    return customers_df, status_df, usage_df, feedback_df, engagement_df
 
 # Create an in-memory sqlite database
 conn =sqlite3.connect(':memory')
