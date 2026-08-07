@@ -33,8 +33,8 @@ def load_all_data():
 # Unpack everything so 'customers_df', 'status_df', etc. exist for line 41
 customers_df, status_df, usage_df, feedback_df, engagement_df, model_df = load_all_data()
 
-# Dataset Overview
 
+# Dataset Overview
 dfs = {
     'Customers': customers_df,
     'Status': status_df,
@@ -43,74 +43,74 @@ dfs = {
     'Engagement': engagement_df
 }
 
-# Table Info
-for name, df in dfs.items():
-    print(f"=== {name} Table has ({df.shape[0]:,} rows, {df.shape[1]} cols) ===")
-    print(list(df.columns))
-    display(df.info())
-    print("-" * 100)
-    print()
+st.subheader("Datasets Overview")
 
-# Table Preview
+# Display Table Info & Previews in clean, expandable sections
 for name, df in dfs.items():
-    print(f"=== {name} Table ===")
-    display(df.head(3))
-    print("-" * 50)
+    with st.expander(f"=== {name} Table ({df.shape[0]:,} rows, {df.shape[1]} cols) ==="):
+        st.write("**Columns:**", list(df.columns))
+        st.write("**Preview:**")
+        st.dataframe(df.head(3))
 
 """# Data Cleaning"""
 
-# Convert Date Columns across all tables
-customers_df['subscription_date'] = pd.to_datetime(customers_df['subscription_date'])
+@st.cache_data
+def load_and_clean_data():
+    # 1. Load Data
+    customers_df = pd.read_csv('gfcustomer_information.csv')
+    status_df = pd.read_csv('gfmonthly_status.csv')
+    usage_df = pd.read_csv('gfusage_data.csv')
+    feedback_df = pd.read_csv('gffeedback_data.csv')
+    engagement_df = pd.read_csv('gfengagement_data.csv')
 
-status_df['activity_month'] = pd.to_datetime(status_df['activity_month'])
-usage_df['activity_month'] = pd.to_datetime(usage_df['activity_month'])
+    # 2. Convert Date Columns
+    customers_df['subscription_date'] = pd.to_datetime(customers_df['subscription_date'])
+    status_df['activity_month'] = pd.to_datetime(status_df['activity_month'])
+    usage_df['activity_month'] = pd.to_datetime(usage_df['activity_month'])
+    feedback_df['feedback_month'] = pd.to_datetime(feedback_df['feedback_month'])
+    engagement_df['engagement_month'] = pd.to_datetime(engagement_df['engagement_month'])
 
-feedback_df['feedback_month'] = pd.to_datetime(feedback_df['feedback_month'])
-engagement_df['engagement_month'] = pd.to_datetime(engagement_df['engagement_month'])
+    return customers_df, status_df, usage_df, feedback_df, engagement_df
 
-print("✓ All date columns converted to datetime.")
+# Load cached data
+customers_df, status_df, usage_df, feedback_df, engagement_df = load_and_clean_data()
 
-# Referential Integrity Check
-master_ids = set(customers_df['customer_id'])
-
-dfs_to_check = {
-    'Status': status_df,
-    'Usage': usage_df,
-    'Feedback': feedback_df,
-    'Engagement': engagement_df
-}
-
-print("\n=== ID ALIGNMENT CHECK ===")
-for name, df in dfs_to_check.items():
-    table_ids = set(df['customer_id'])
-    unmatched = table_ids - master_ids
-    if len(unmatched) == 0:
-        print(f"✓ {name}: All {len(table_ids):,} unique customers exist in master Customers table.")
-    else:
-        print(f"⚠️ {name}: Found {len(unmatched)} IDs not present in master Customers table.")
+# Optional: Display Referential Integrity Check on Dashboard
+with st.expander("🔍 Referential Integrity Check"):
+    master_ids = set(customers_df['customer_id'])
+    dfs_to_check = {
+        'Status': status_df,
+        'Usage': usage_df,
+        'Feedback': feedback_df,
+        'Engagement': engagement_df
+    }
+    
+    for name, df in dfs_to_check.items():
+        table_ids = set(df['customer_id'])
+        unmatched = table_ids - master_ids
+        if len(unmatched) == 0:
+            st.success(f"**{name}:** All {len(table_ids):,} unique customers exist in master Customers table.")
+        else:
+            st.warning(f"**{name}:** Found {len(unmatched)} IDs not present in master Customers table.")
 
 # Check for duplicate customer IDs in the primary dimension table
-duplicate_query = """
-SELECT
-    customer_id,
-    COUNT(*) AS occurrence_count
-FROM gfcustomer_information
-GROUP BY customer_id
-HAVING COUNT(*) > 1;
-"""
+duplicates = customers_df[customers_df.duplicated(subset=['customer_id'], keep=False)]
+num_duplicates = duplicates['customer_id'].nunique()
 
-duplicates = pd.read_sql_query(duplicate_query, conn)
-print(f"Duplicate Customer IDs found: {len(duplicates)}")
+# Inspect unique values in categorical columns
+unique_customer_types = customers_df[['customer_type']].drop_duplicates()
 
-# Inspect unique values in categorical columns to catch typos or whitespace
-categorical_query = """
-SELECT DISTINCT customer_type
-FROM gfcustomer_information;
-"""
+# Optional: Display checks in an expander on your dashboard
+with st.expander("🔎 Data Quality Checks"):
+    if num_duplicates == 0:
+        st.success("✓ Duplicate Customer IDs found: **0**")
+    else:
+        st.warning(f"⚠️ Duplicate Customer IDs found: **{num_duplicates}**")
+        st.dataframe(duplicates)
 
-categories = pd.read_sql_query(categorical_query, conn)
-display(categories)
-
+    st.write("**Unique Customer Types:**")
+    st.dataframe(unique_customer_types)
+    
 """# EDA
 
 **Numerical Columns Audit**
@@ -151,20 +151,24 @@ Our numerical data is clean, complete, and reliable. The metrics confirm that ou
 
 # Descriptive stats for numerical columns across all 5 tables
 
-# Get list of all tables in the database
-tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
-all_tables = pd.read_sql_query(tables_query, conn)['name'].tolist()
+# Define your dictionary of DataFrames
+dfs = {
+    'gfcustomer_information': customers_df,
+    'gfmonthly_status': status_df,
+    'gfusage_data': usage_df,
+    'gffeedback_data': feedback_df,
+    'gfengagement_data': engagement_df
+}
 
 num_summaries = []
 
-for table in all_tables:
-    df = pd.read_sql_query(f"SELECT * FROM {table};", conn)
+for table_name, df in dfs.items():
     # Select numeric columns only
     numeric_df = df.select_dtypes(include=[np.number])
 
     for col in numeric_df.columns:
         num_summaries.append({
-            'table_name': table,
+            'table_name': table_name,
             'column_name': col,
             'count': numeric_df[col].count(),
             'missing_count': numeric_df[col].isnull().sum(),
@@ -179,8 +183,10 @@ for table in all_tables:
 # Combine into a single consolidated summary DataFrame
 df_numerical_summary = pd.DataFrame(num_summaries)
 
-print("=== CONSOLIDATED NUMERICAL COLUMNS BUCKET ===")
-display(df_numerical_summary)
+# Display in Streamlit
+st.subheader("🔢 Consolidated Numerical Summary")
+st.dataframe(df_numerical_summary, use_container_width=True)
+
 
 """**Categorical Columns Audit**
 
@@ -214,44 +220,69 @@ Our data hygiene is in excellent shape with zero missing values, meaning we don'
 """
 
 # Descriptive stats for categorical columns across all 5 tables
-# Get all table names from database
-tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
-all_tables = pd.read_sql_query(tables_query, conn)['name'].tolist()
+
+# 1. Consolidated Categorical Summary
+dfs = {
+    'gfcustomer_information': customers_df,
+    'gfmonthly_status': status_df,
+    'gfusage_data': usage_df,
+    'gffeedback_data': feedback_df,
+    'gfengagement_data': engagement_df
+}
 
 cat_summaries = []
 
-for table in all_tables:
-    df = pd.read_sql_query(f"SELECT * FROM {table};", conn)
+for table_name, df in dfs.items():
     # Select non-numeric / string columns
     categorical_df = df.select_dtypes(include=['object', 'category'])
 
     for col in categorical_df.columns:
         total_rows = len(categorical_df)
-        top_val = categorical_df[col].mode()[0] if not categorical_df[col].empty else None
+        mode_series = categorical_df[col].mode()
+        top_val = mode_series.iloc[0] if not mode_series.empty else None
         top_freq = categorical_df[col].value_counts().iloc[0] if not categorical_df[col].empty else 0
 
         cat_summaries.append({
-            'table_name': table,
+            'table_name': table_name,
             'column_name': col,
             'total_rows': total_rows,
             'unique_values': categorical_df[col].nunique(),
             'missing_count': categorical_df[col].isnull().sum(),
             'most_frequent_value': top_val,
             'top_value_count': top_freq,
-            'top_value_pct': round((top_freq / total_rows) * 100, 2)
+            'top_value_pct': round((top_freq / total_rows) * 100, 2) if total_rows > 0 else 0
         })
 
-# Display consolidated categorical summary
 df_categorical_summary = pd.DataFrame(cat_summaries)
-display(df_categorical_summary)
 
-# 1. Fetch start date, end date, and total distinct months in one query
-df = pd.read_sql_query("SELECT MIN(activity_month) AS start, MAX(activity_month) AS end, COUNT(DISTINCT activity_month) AS total_months FROM gfmonthly_status;", conn)
+# Render Categorical Table in Streamlit
+st.subheader("🔤 Consolidated Categorical Summary")
+st.dataframe(df_categorical_summary, use_container_width=True)
 
-# 2. Extract values and calculate years & remaining months
-m = int(df['total_months'].iloc[0])
-print(f"Timeframe: {df['start'].iloc[0]} to {df['end'].iloc[0]}")
-print(f"Duration : {m} months ({m // 12} years, {m % 12} months)")
+# 2. Timeframe Analysis
+start_date = status_df['activity_month'].min()
+end_date = status_df['activity_month'].max()
+
+# Ensure activity_month is datetime type to calculate distinct months accurately
+if not pd.api.types.is_datetime64_any_dtype(status_df['activity_month']):
+    status_dt = pd.to_datetime(status_df['activity_month'])
+else:
+    status_dt = status_df['activity_month']
+
+total_months = status_dt.dt.to_period('M').nunique()
+years = total_months // 12
+remaining_months = total_months % 12
+
+# Format dates to YYYY-MM-DD string format
+start_str = pd.to_datetime(start_date).strftime('%Y-%m-%d')
+end_str = pd.to_datetime(end_date).strftime('%Y-%m-%d')
+
+# Render Timeframe Info using Streamlit Metrics / Info Box
+st.subheader("📅 Activity Timeframe")
+st.info(
+    f"**Timeframe:** {start_str} to {end_str}\n\n"
+    f"**Duration:** {total_months} months ({years} years, {remaining_months} months)"
+)
 
 """**High-Level Account Churn & Retention Baseline (SQL Query)**
 **Objective**
@@ -276,25 +307,40 @@ This number gives us a clear standard to judge all other business segments again
 """
 
 # Churn Rate
-simple_churn_query = """
-SELECT
-    COUNT(*) AS total_customers,
-    SUM(CASE WHEN max_month < '2025-12-01' THEN 1 ELSE 0 END) AS total_churned,
-    SUM(CASE WHEN max_month = '2025-12-01' THEN 1 ELSE 0 END) AS total_active,
-    ROUND(
-        SUM(CASE WHEN max_month < '2025-12-01' THEN 1.0 ELSE 0.0 END) * 100.0 / COUNT(*),
-        2
-    ) AS churn_rate_pct
-FROM (
-    -- Step 1: Find the last recorded month for each customer
-    SELECT customer_id, MAX(activity_month) AS max_month
-    FROM gfmonthly_status
-    GROUP BY customer_id
-);
-"""
 
-df_simple = pd.read_sql_query(simple_churn_query, conn)
-display(df_simple)
+# 1. Step 1: Find the last recorded month for each customer
+customer_last_month = status_df.groupby('customer_id')['activity_month'].max().reset_index()
+customer_last_month.rename(columns={'activity_month': 'max_month'}, inplace=True)
+
+# Determine the overall latest month in the dataset dynamically
+latest_dataset_month = customer_last_month['max_month'].max()
+
+# 2. Step 2: Calculate churn metrics
+total_customers = len(customer_last_month)
+total_churned = (customer_last_month['max_month'] < latest_dataset_month).sum()
+total_active = (customer_last_month['max_month'] == latest_dataset_month).sum()
+churn_rate_pct = round((total_churned / total_customers) * 100, 2) if total_customers > 0 else 0.0
+
+# 3. Format as a clean DataFrame (matching your SQL output shape)
+df_simple = pd.DataFrame([{
+    'total_customers': total_customers,
+    'total_churned': total_churned,
+    'total_active': total_active,
+    'churn_rate_pct': churn_rate_pct
+}])
+
+# Render in Streamlit
+st.subheader("Churn Rate Overview")
+
+# Option A: Display as Streamlit Metric KPI Cards (Recommended)
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total Customers", f"{total_customers:,}")
+col2.metric("Active Customers", f"{total_active:,}")
+col3.metric("Churned Customers", f"{total_churned:,}")
+col4.metric("Churn Rate", f"{churn_rate_pct}%")
+
+# Option B: Display as standard table preview
+st.dataframe(df_simple, use_container_width=True)
 
 """**Multi-Dimensional Churn & Volume Segmentation**
 **Objective**
@@ -326,33 +372,34 @@ While smaller accounts (SMBs and Basic plans) churn at higher rates (35%–37%),
 """
 
 # Churn rate by Industy, region, cusomer type, plan type, trends in monthly subscription
-
 # Set overall style
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({'font.size': 11})
 
+st.subheader("Churn Analysis by Segment")
+
 # ----------------------------------------------------
-# 1. Fetch data and determine churn flag per customer
+# 1. Prepare data and determine churn flag per customer
 # ----------------------------------------------------
-df_status = pd.read_sql_query("SELECT * FROM gfmonthly_status;", conn)
-df_status['activity_month'] = pd.to_datetime(df_status['activity_month'])
-max_month = df_status['activity_month'].max()
+# Identify latest activity month across dataset
+max_month = status_df['activity_month'].max()
 
 # Last active month per customer
-customer_last = df_status.groupby('customer_id')['activity_month'].max().reset_index()
+customer_last = status_df.groupby('customer_id')['activity_month'].max().reset_index()
 customer_last['is_churned'] = (customer_last['activity_month'] < max_month).astype(int)
 
-# Merge back to customer profile (most recent row per customer)
-customer_profile = df_status.sort_values('activity_month').groupby('customer_id').last().reset_index()
-customer_profile['is_churned'] = customer_profile['customer_id'].map(
-    customer_last.set_index('customer_id')['is_churned']
+# Merge customer demographic attributes from customers_df with churn status
+customer_profile = customers_df.merge(
+    customer_last[['customer_id', 'is_churned']], 
+    on='customer_id', 
+    how='left'
 )
 
 # ----------------------------------------------------
 # 2. Helper function to aggregate volume and churn rate
 # ----------------------------------------------------
 def get_segment_metrics(col, custom_order=None):
-    df_grouped = customer_profile.groupby(col).agg(
+    df_grouped = customer_profile.groupby(col, observed=False).agg(
         total_customers=('customer_id', 'count'),
         churn_rate=('is_churned', lambda x: x.mean() * 100)
     ).reset_index()
@@ -376,7 +423,6 @@ plan_df = get_segment_metrics('plan_type', custom_order=['Basic', 'Pro', 'Enterp
 # ----------------------------------------------------
 fig, axes = plt.subplots(4, 2, figsize=(16, 18))
 
-# Helper to annotate values on top of bars
 def annotate_bars(ax, is_pct=False):
     for p in ax.patches:
         height = p.get_height()
@@ -388,7 +434,7 @@ def annotate_bars(ax, is_pct=False):
                         fontsize=10, fontweight='bold',
                         xytext=(0, 3), textcoords='offset points')
 
-# Row 1: Industry (Volume vs Churn Rate)
+# Row 1: Industry
 sns.barplot(data=ind_df, x='industry', y='total_customers', hue='industry', legend=False, palette='Blues_r', ax=axes[0, 0])
 axes[0, 0].set_title('Total Customers by Industry', fontsize=12, fontweight='bold')
 axes[0, 0].set_ylabel('Total Customers')
@@ -401,7 +447,7 @@ axes[0, 1].set_ylabel('Churn Rate (%)')
 axes[0, 1].set_ylim(0, ind_df['churn_rate'].max() * 1.18)
 annotate_bars(axes[0, 1], is_pct=True)
 
-# Row 2: Region (Volume vs Churn Rate)
+# Row 2: Region
 sns.barplot(data=reg_df, x='region', y='total_customers', hue='region', legend=False, palette='Greens_r', ax=axes[1, 0])
 axes[1, 0].set_title('Total Customers by Region', fontsize=12, fontweight='bold')
 axes[1, 0].set_ylabel('Total Customers')
@@ -414,7 +460,7 @@ axes[1, 1].set_ylabel('Churn Rate (%)')
 axes[1, 1].set_ylim(0, reg_df['churn_rate'].max() * 1.18)
 annotate_bars(axes[1, 1], is_pct=True)
 
-# Row 3: Customer Type (Volume vs Churn Rate)
+# Row 3: Customer Type
 sns.barplot(data=type_df, x='customer_type', y='total_customers', hue='customer_type', legend=False, palette='Blues_r', ax=axes[2, 0])
 axes[2, 0].set_title('Total Customers by Customer Type', fontsize=12, fontweight='bold')
 axes[2, 0].set_ylabel('Total Customers')
@@ -427,7 +473,7 @@ axes[2, 1].set_ylabel('Churn Rate (%)')
 axes[2, 1].set_ylim(0, type_df['churn_rate'].max() * 1.18)
 annotate_bars(axes[2, 1], is_pct=True)
 
-# Row 4: Plan Type (Volume vs Churn Rate)
+# Row 4: Plan Type
 sns.barplot(data=plan_df, x='plan_type', y='total_customers', hue='plan_type', legend=False, palette='Greens_r', ax=axes[3, 0])
 axes[3, 0].set_title('Total Customers by Plan Type', fontsize=12, fontweight='bold')
 axes[3, 0].set_ylabel('Total Customers')
@@ -441,7 +487,10 @@ axes[3, 1].set_ylim(0, plan_df['churn_rate'].max() * 1.18)
 annotate_bars(axes[3, 1], is_pct=True)
 
 plt.tight_layout()
-plt.show()
+
+# Render plot in Streamlit app
+st.pyplot(fig)
+plt.close(fig)
 
 """**Average Revenue Per User (ARPU) & Price Point Distribution by Plan**
 
@@ -478,16 +527,20 @@ Encouraging Basic and Pro users to upgrade to higher tiers is one of the most po
 """
 
 # Cost per plan
-
-# Set visual style
+# Set overall style
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({'font.size': 11})
 
-# 1. Fetch monthly status data
-df_status = pd.read_sql_query("SELECT * FROM gfmonthly_status;", conn)
+st.subheader("Monthly Revenue & Pricing Breakdown by Plan Type")
+
+# 1. Merge status data with customer plan types (if not already merged)
+if 'plan_type' in status_df.columns:
+    df_revenue = status_df
+else:
+    df_revenue = status_df.merge(customers_df[['customer_id', 'plan_type']], on='customer_id', how='left')
 
 # 2. Calculate revenue breakdown per plan type
-plan_pricing = df_status.groupby('plan_type').agg(
+plan_pricing = df_revenue.groupby('plan_type', observed=False).agg(
     avg_monthly_revenue=('monthly_revenue', 'mean'),
     median_monthly_revenue=('monthly_revenue', 'median'),
     min_monthly_revenue=('monthly_revenue', 'min'),
@@ -501,27 +554,28 @@ plan_pricing['plan_type'] = pd.Categorical(plan_pricing['plan_type'], categories
 plan_pricing = plan_pricing.sort_values('plan_type').reset_index(drop=True)
 
 # ----------------------------------------------------
-# 3. Print Summary Table
+# 3. Display Summary Table
 # ----------------------------------------------------
-print("=== MONTHLY REVENUE (PRICING) BREAKDOWN BY PLAN TYPE ===")
 formatted_pricing = plan_pricing.copy()
 for col in ['avg_monthly_revenue', 'median_monthly_revenue', 'min_monthly_revenue', 'max_monthly_revenue']:
     formatted_pricing[col] = formatted_pricing[col].apply(lambda x: f"${x:,.2f}")
 
-display(formatted_pricing)
+st.write("**Monthly Revenue Breakdown Table**")
+st.dataframe(formatted_pricing, use_container_width=True)
 
 # ----------------------------------------------------
 # 4. Visual Comparison: Average Revenue per Plan Type
 # ----------------------------------------------------
-plt.figure(figsize=(9, 5))
+fig, ax = plt.subplots(figsize=(9, 5))
 
-ax = sns.barplot(
+sns.barplot(
     data=plan_pricing,
     x='plan_type',
     y='avg_monthly_revenue',
     hue='plan_type',
     legend=False,
-    palette='Blues_r'
+    palette='Blues_r',
+    ax=ax
 )
 
 # Annotate bars with exact dollar amounts
@@ -536,16 +590,19 @@ for p in ax.patches:
             xytext=(0, 5), textcoords='offset points'
         )
 
-plt.title('Average Monthly Revenue (ARPU) by Plan Type', fontsize=14, fontweight='bold', pad=15)
-plt.xlabel('Plan Type', fontsize=12, labelpad=10)
-plt.ylabel('Average Monthly Revenue ($)', fontsize=12, labelpad=10)
-plt.ylim(0, plan_pricing['avg_monthly_revenue'].max() * 1.18)
+ax.set_title('Average Monthly Revenue (ARPU) by Plan Type', fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel('Plan Type', fontsize=12, labelpad=10)
+ax.set_ylabel('Average Monthly Revenue ($)', fontsize=12, labelpad=10)
+ax.set_ylim(0, plan_pricing['avg_monthly_revenue'].max() * 1.18)
 
 # Format y-axis ticks as currency
 ax.yaxis.set_major_formatter('${x:,.0f}')
 
 plt.tight_layout()
-plt.show()
+
+# Render plot in Streamlit app
+st.pyplot(fig)
+plt.close(fig)
 
 """# **Monthly Recurring Revenue (MRR) Loss Analysis by Subscription Plan**
 **Objective**
@@ -580,10 +637,17 @@ Focus retention efforts on Enterprise accounts. Saving just 1 Enterprise custome
 sns.set_theme(style="whitegrid")
 plt.rcParams.update({'font.size': 11})
 
+st.subheader("Monthly Revenue (MRR) Lost to Churn by Plan Type")
+
 # ----------------------------------------------------
 # 1. Fetch data & identify churned customers
 # ----------------------------------------------------
-df_status = pd.read_sql_query("SELECT * FROM gfmonthly_status;", conn)
+# Merge plan_type from customers_df if missing in status_df
+if 'plan_type' in status_df.columns:
+    df_status = status_df.copy()
+else:
+    df_status = status_df.merge(customers_df[['customer_id', 'plan_type']], on='customer_id', how='left')
+
 df_status['activity_month'] = pd.to_datetime(df_status['activity_month'])
 
 # Identify the dataset's latest active month
@@ -606,7 +670,7 @@ churned_df = last_customer_records[last_customer_records['is_churned']].copy()
 # ----------------------------------------------------
 # 2. Aggregate lost revenue by Plan Type
 # ----------------------------------------------------
-plan_mrr_loss = churned_df.groupby('plan_type').agg(
+plan_mrr_loss = churned_df.groupby('plan_type', observed=False).agg(
     churned_customers=('customer_id', 'count'),
     total_lost_mrr=('monthly_revenue', 'sum'),
     avg_lost_mrr=('monthly_revenue', 'mean')
@@ -614,7 +678,10 @@ plan_mrr_loss = churned_df.groupby('plan_type').agg(
 
 # Calculate % share of total lost MRR
 total_loss_all_plans = plan_mrr_loss['total_lost_mrr'].sum()
-plan_mrr_loss['pct_of_total_loss'] = (plan_mrr_loss['total_lost_mrr'] / total_loss_all_plans) * 100
+plan_mrr_loss['pct_of_total_loss'] = (
+    (plan_mrr_loss['total_lost_mrr'] / total_loss_all_plans) * 100 
+    if total_loss_all_plans > 0 else 0
+)
 
 # Enforce logical plan order
 plan_order = ['Basic', 'Pro', 'Enterprise']
@@ -622,29 +689,31 @@ plan_mrr_loss['plan_type'] = pd.Categorical(plan_mrr_loss['plan_type'], categori
 plan_mrr_loss = plan_mrr_loss.sort_values('plan_type').reset_index(drop=True)
 
 # ----------------------------------------------------
-# 3. Print Summary DataFrame
+# 3. Display KPI Metric & Summary Table
 # ----------------------------------------------------
-print("=== MONTHLY REVENUE (MRR) LOSS BY PLAN TYPE ===")
+st.metric("Total Monthly Revenue Lost (All Plans)", f"${total_loss_all_plans:,.2f}")
+
 formatted_table = plan_mrr_loss.copy()
 formatted_table['total_lost_mrr'] = formatted_table['total_lost_mrr'].apply(lambda x: f"${x:,.2f}")
 formatted_table['avg_lost_mrr'] = formatted_table['avg_lost_mrr'].apply(lambda x: f"${x:,.2f}")
 formatted_table['pct_of_total_loss'] = formatted_table['pct_of_total_loss'].apply(lambda x: f"{x:.1f}%")
 
-display(formatted_table)
-print(f"\nTotal Monthly Revenue Lost Across All Plans: ${total_loss_all_plans:,.2f}")
+st.write("**Lost MRR Breakdown Table**")
+st.dataframe(formatted_table, use_container_width=True)
 
 # ----------------------------------------------------
 # 4. Plot Lost MRR Chart
 # ----------------------------------------------------
-plt.figure(figsize=(10, 6))
+fig, ax = plt.subplots(figsize=(10, 6))
 
-ax = sns.barplot(
+sns.barplot(
     data=plan_mrr_loss,
     x='plan_type',
     y='total_lost_mrr',
     hue='plan_type',
     legend=False,
-    palette='Reds_r'
+    palette='Reds_r',
+    ax=ax
 )
 
 # Annotate bars with dollar amounts and customer counts
@@ -652,27 +721,32 @@ for p in ax.patches:
     height = p.get_height()
     if height > 0:
         # Match height to plan row to pull customer count
-        plan_row = plan_mrr_loss[plan_mrr_loss['total_lost_mrr'] == height].iloc[0]
-        label = f"${height:,.0f}\n({int(plan_row['churned_customers'])} accounts)"
+        matching_rows = plan_mrr_loss[plan_mrr_loss['total_lost_mrr'] == height]
+        if not matching_rows.empty:
+            plan_row = matching_rows.iloc[0]
+            label = f"${height:,.0f}\n({int(plan_row['churned_customers'])} accounts)"
 
-        ax.annotate(
-            label,
-            (p.get_x() + p.get_width() / 2., height),
-            ha='center', va='bottom',
-            fontsize=10, fontweight='bold',
-            xytext=(0, 5), textcoords='offset points'
-        )
+            ax.annotate(
+                label,
+                (p.get_x() + p.get_width() / 2., height),
+                ha='center', va='bottom',
+                fontsize=10, fontweight='bold',
+                xytext=(0, 5), textcoords='offset points'
+            )
 
-plt.title('Total Monthly Revenue (MRR) Lost to Churn by Plan Type', fontsize=14, fontweight='bold', pad=15)
-plt.xlabel('Plan Type', fontsize=12, labelpad=10)
-plt.ylabel('Total Lost Revenue ($)', fontsize=12, labelpad=10)
-plt.ylim(0, plan_mrr_loss['total_lost_mrr'].max() * 1.22)
+ax.set_title('Total Monthly Revenue (MRR) Lost to Churn by Plan Type', fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel('Plan Type', fontsize=12, labelpad=10)
+ax.set_ylabel('Total Lost Revenue ($)', fontsize=12, labelpad=10)
+ax.set_ylim(0, plan_mrr_loss['total_lost_mrr'].max() * 1.22 if not plan_mrr_loss.empty else 100)
 
 # Format y-axis ticks as currency
 ax.yaxis.set_major_formatter('${x:,.0f}')
 
 plt.tight_layout()
-plt.show()
+
+# Render plot in Streamlit app
+st.pyplot(fig)
+plt.close(fig)
 
 """# Data Ingestion
 
@@ -695,104 +769,98 @@ Comprehensive Metrics: 25 total attributes capturing customer profiles, monthly 
 By combining these isolated tables into a single master view, we now have a complete 360-degree picture of each customer's monthly journey, making it much easier to analyze retention, usage patterns, and churn risks.
 """
 
-# List all tables in your database
-tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", conn)
-print("=== AVAILABLE TABLES IN YOUR DATABASE ===")
-print(tables)
+# ----------------------------------------------------
+# 1. Cached Data Ingestion & Merging Function
+# ----------------------------------------------------
+@st.cache_data
+def load_and_build_analytical_df():
+    # Load raw CSV tables
+    df_customers = pd.read_csv('gfcustomer_information.csv')
+    df_status    = pd.read_csv('gfmonthly_status.csv')
+    df_usage     = pd.read_csv('gfusage_data.csv')
+    df_feedback  = pd.read_csv('gffeedback_data.csv')
+    df_engagement= pd.read_csv('gfengagement_data.csv')
+
+    # Align month column names across all datasets to 'activity_month'
+    df_feedback_clean = df_feedback.rename(columns={'feedback_month': 'activity_month'})
+    df_engagement_clean = df_engagement.rename(columns={'engagement_month': 'activity_month'})
+
+    # Convert date columns to proper datetime format
+    date_cols = ['subscription_date', 'cohort', 'activity_month']
+    for df in [df_customers, df_status, df_usage, df_feedback_clean, df_engagement_clean]:
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col])
+
+    # Drop redundant static attributes from df_status to prevent _x / _y duplicate columns
+    status_core_cols = [
+        col for col in df_status.columns
+        if col not in ['cohort', 'industry', 'region', 'customer_type', 'plan_type']
+    ]
+    df_status_clean = df_status[status_core_cols]
+
+    # Sequential Left Joins (Building Monthly Analytical Spine)
+    analytical_df = pd.merge(df_status_clean, df_customers, on='customer_id', how='left')
+
+    analytical_df = pd.merge(
+        analytical_df,
+        df_usage,
+        on=['customer_id', 'activity_month'],
+        how='left',
+        suffixes=('', '_usage')
+    )
+
+    analytical_df = pd.merge(
+        analytical_df,
+        df_feedback_clean,
+        on=['customer_id', 'activity_month'],
+        how='left'
+    )
+
+    analytical_df = pd.merge(
+        analytical_df,
+        df_engagement_clean,
+        on=['customer_id', 'activity_month'],
+        how='left'
+    )
+
+    # Drop redundant 'months_since_sub_usage' if generated during join
+    if 'months_since_sub_usage' in analytical_df.columns:
+        analytical_df.drop(columns=['months_since_sub_usage'], inplace=True)
+
+    # Impute Missing Values Post-Merge
+    zero_fill_cols = [
+        'session_duration', 'feature_crm', 'feature_email_campaigns',
+        'feature_analytics', 'feature_automation', 'engagement_count',
+        'response_rate', 'avg_response_rate'
+    ]
+
+    for col in zero_fill_cols:
+        if col in analytical_df.columns:
+            analytical_df[col] = analytical_df[col].fillna(0)
+
+    return df_customers, df_status, df_usage, df_feedback, df_engagement, analytical_df
+
+# Call function once into cached memory
+customers_df, status_df, usage_df, feedback_df, engagement_df, model_df = load_and_build_analytical_df()
 
 # ----------------------------------------------------
-# 0. Load Raw Tables from SQLite Connection
+# 2. UI Ingestion Summary & Verification
 # ----------------------------------------------------
-df_customers  = pd.read_sql_query("SELECT * FROM gfcustomer_information;", conn)
-df_status     = pd.read_sql_query("SELECT * FROM gfmonthly_status;", conn)
-df_usage      = pd.read_sql_query("SELECT * FROM gfusage_data;", conn)
-df_feedback   = pd.read_sql_query("SELECT * FROM gffeedback_data;", conn)
-df_engagement = pd.read_sql_query("SELECT * FROM gfengagement_data;", conn)
+st.subheader("⚙️ Data Ingestion & Pipeline Summary")
 
-# ----------------------------------------------------
-# 1. Clean & Standardize Monthly Join Keys
-# ----------------------------------------------------
-# Align month column names across all datasets to 'activity_month'
-df_feedback_clean = df_feedback.rename(columns={'feedback_month': 'activity_month'})
-df_engagement_clean = df_engagement.rename(columns={'engagement_month': 'activity_month'})
+# KPI Summary Cards
+col1, col2, col3 = st.columns(3)
+col1.metric("Master Dataset Rows", f"{len(model_df):,}")
+col2.metric("Unique Customers Retained", f"{model_df['customer_id'].nunique():,}")
+col3.metric("Total Joined Features", len(model_df.columns))
 
-# Ensure proper datetime format
-date_cols = ['subscription_date', 'cohort', 'activity_month']
-
-for df in [df_customers, df_status, df_usage, df_feedback_clean, df_engagement_clean]:
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col])
-
-# Drop redundant static attributes from df_status to prevent _x / _y duplicate columns
-status_core_cols = [
-    col for col in df_status.columns
-    if col not in ['cohort', 'industry', 'region', 'customer_type', 'plan_type']
-]
-df_status_clean = df_status[status_core_cols]
-
-# ----------------------------------------------------
-# 2. Sequential Left Joins (Building Monthly Analytical Spine)
-# ----------------------------------------------------
-# Start with gfmonthly_status as the primary time-series backbone
-analytical_df = pd.merge(df_status_clean, df_customers, on='customer_id', how='left')
-
-# Join Usage logs on (customer_id, activity_month)
-analytical_df = pd.merge(
-    analytical_df,
-    df_usage,
-    on=['customer_id', 'activity_month'],
-    how='left',
-    suffixes=('', '_usage')
-)
-
-# Join Feedback logs on (customer_id, activity_month)
-analytical_df = pd.merge(
-    analytical_df,
-    df_feedback_clean,
-    on=['customer_id', 'activity_month'],
-    how='left'
-)
-
-# Join Engagement logs on (customer_id, activity_month)
-analytical_df = pd.merge(
-    analytical_df,
-    df_engagement_clean,
-    on=['customer_id', 'activity_month'],
-    how='left'
-)
-
-# Drop redundant 'months_since_sub_usage' if generated during join
-if 'months_since_sub_usage' in analytical_df.columns:
-    analytical_df.drop(columns=['months_since_sub_usage'], inplace=True)
-
-# ----------------------------------------------------
-# 3. Impute Missing Values Post-Merge
-# ----------------------------------------------------
-# Zero-fill event counts for months where customers had no recorded activity
-zero_fill_cols = [
-    'session_duration', 'feature_crm', 'feature_email_campaigns',
-    'feature_analytics', 'feature_automation', 'engagement_count',
-    'response_rate', 'avg_response_rate'
-]
-
-for col in zero_fill_cols:
-    if col in analytical_df.columns:
-        analytical_df[col] = analytical_df[col].fillna(0)
-
-# ----------------------------------------------------
-# 4. Ingestion Summary & Verification
-# ----------------------------------------------------
-print("=== INGESTION SUCCESSFUL ===")
-print(f"• Master Analytical Dataset Rows : {len(analytical_df):,}")
-print(f"• Unique Customers Retained     : {analytical_df['customer_id'].nunique():,}")
-print(f"• Total Distinct Features Joined : {len(analytical_df.columns)}")
-
-print("\n--- Feature List ---")
-for idx, col in enumerate(analytical_df.columns, 1):
-    print(f"{idx:2d}. {col}")
-
-display(analytical_df.head())
+# Optional details in expandable panel
+with st.expander("🔍 Inspect Master Analytical Dataset"):
+    st.write("**Feature List:**")
+    st.write(list(model_df.columns))
+    st.write("**Dataset Preview (First 5 Rows):**")
+    st.dataframe(model_df.head(), use_container_width=True)
 
 """**Subscription Cohort Definition & Tenure Calculation**
 **Objective**
@@ -819,49 +887,57 @@ This step prepares our data so we can clearly see customer loyalty and retention
 # Cohort Creation and Monthly subscription
 
 # Ensure date columns are in datetime format
-analytical_df['activity_month'] = pd.to_datetime(analytical_df['activity_month'])
-analytical_df['subscription_date'] = pd.to_datetime(analytical_df['subscription_date'])
+model_df['activity_month'] = pd.to_datetime(model_df['activity_month'])
+model_df['subscription_date'] = pd.to_datetime(model_df['subscription_date'])
 
 # ----------------------------------------------------
 # 1. Create Monthly Subscription Cohort
 # ----------------------------------------------------
 # Option A: Based on official subscription_date (Normalized to 1st of month)
-analytical_df['subscription_cohort'] = analytical_df['subscription_date'].dt.to_period('M').dt.to_timestamp()
+model_df['subscription_cohort'] = model_df['subscription_date'].dt.to_period('M').dt.to_timestamp()
 
 # Option B: Alternative - Based on customer's first recorded activity month in dataset
-first_activity = analytical_df.groupby('customer_id')['activity_month'].transform('min')
-analytical_df['first_activity_cohort'] = first_activity
+first_activity = model_df.groupby('customer_id')['activity_month'].transform('min')
+model_df['first_activity_cohort'] = first_activity
 
 # ----------------------------------------------------
 # 2. Calculate Months Since Subscription
 # ----------------------------------------------------
 # Precise month-difference calculation between activity_month and subscription cohort
-analytical_df['months_since_subscription'] = (
-    (analytical_df['activity_month'].dt.year - analytical_df['subscription_cohort'].dt.year) * 12 +
-    (analytical_df['activity_month'].dt.month - analytical_df['subscription_cohort'].dt.month)
+model_df['months_since_subscription'] = (
+    (model_df['activity_month'].dt.year - model_df['subscription_cohort'].dt.year) * 12 +
+    (model_df['activity_month'].dt.month - model_df['subscription_cohort'].dt.month)
 )
 
 # Replace any negative values with 0 (for edge cases where activity occurs in signup month)
-analytical_df['months_since_subscription'] = analytical_df['months_since_subscription'].clip(lower=0)
+model_df['months_since_subscription'] = model_df['months_since_subscription'].clip(lower=0)
 
 # ----------------------------------------------------
-# 3. Verification & Inspection
+# 3. UI Verification & Inspection
 # ----------------------------------------------------
-print("=== COHORT & TENURE CALCULATIONS COMPLETE ===")
-print("• Sample Cohorts & Months Since Subscription:")
-display(analytical_df[[
-    'customer_id',
-    'subscription_date',
-    'subscription_cohort',
-    'activity_month',
-    'months_since_subscription'
-]].head(10))
+st.subheader("Cohort & Tenure Feature Engineering")
 
-# Cohort Size Distribution
-print("\n• Customer Count per Subscription Cohort (Top 10):")
-cohort_counts = analytical_df.groupby('subscription_cohort')['customer_id'].nunique().reset_index()
-cohort_counts.columns = ['Subscription Cohort', 'Unique Customer Count']
-print(cohort_counts.head(10).to_string(index=False))
+# Verification preview inside expandable drawer
+with st.expander("🔍 Inspect Cohort & Tenure Output Data"):
+    st.write("**Sample Cohorts & Months Since Subscription:**")
+    st.dataframe(
+        model_df[[
+            'customer_id',
+            'subscription_date',
+            'subscription_cohort',
+            'activity_month',
+            'months_since_subscription'
+        ]].head(10),
+        use_container_width=True
+    )
+
+    # Cohort Size Distribution
+    st.write("**Customer Count per Subscription Cohort (Top 10):**")
+    cohort_counts = model_df.groupby('subscription_cohort')['customer_id'].nunique().reset_index()
+    cohort_counts.columns = ['Subscription Cohort', 'Unique Customer Count']
+    cohort_counts['Subscription Cohort'] = cohort_counts['Subscription Cohort'].dt.strftime('%Y-%m')
+    
+    st.dataframe(cohort_counts.head(10), use_container_width=True)
 
 """**Customer Retention Matrix & Heatmap Analysis**
 **Objective**
@@ -895,24 +971,26 @@ Our business enjoys strong early customer retention and a solid long-term founda
 sns.set_theme(style="white")
 plt.rcParams.update({'font.size': 10})
 
+st.subheader("Customer Cohort Retention Analysis")
+
 # ----------------------------------------------------
 # 1. Prepare Data & Ensure Cohort Indexing
 # ----------------------------------------------------
 # Ensure dates are datetime objects
-analytical_df['activity_month'] = pd.to_datetime(analytical_df['activity_month'])
-analytical_df['subscription_date'] = pd.to_datetime(analytical_df['subscription_date'])
+model_df['activity_month'] = pd.to_datetime(model_df['activity_month'])
+model_df['subscription_date'] = pd.to_datetime(model_df['subscription_date'])
 
 # Assign Cohort (1st of signup month)
-analytical_df['cohort_month'] = analytical_df['subscription_date'].dt.to_period('M').dt.to_timestamp()
+model_df['cohort_month'] = model_df['subscription_date'].dt.to_period('M').dt.to_timestamp()
 
 # Calculate Cohort Index (0 = Signup Month, 1 = Month 1, etc.)
-analytical_df['cohort_index'] = (
-    (analytical_df['activity_month'].dt.year - analytical_df['cohort_month'].dt.year) * 12 +
-    (analytical_df['activity_month'].dt.month - analytical_df['cohort_month'].dt.month)
+model_df['cohort_index'] = (
+    (model_df['activity_month'].dt.year - model_df['cohort_month'].dt.year) * 12 +
+    (model_df['activity_month'].dt.month - model_df['cohort_month'].dt.month)
 )
 
-# Filter out active flags if applicable (ensure we only count active customer-months)
-active_df = analytical_df[analytical_df['is_active'] == 1] if 'is_active' in analytical_df.columns else analytical_df
+# Filter out active flags if applicable
+active_df = model_df[model_df['is_active'] == 1] if 'is_active' in model_df.columns else model_df
 
 # ----------------------------------------------------
 # 2. Build Count Matrix & Calculate Retention Rates (%)
@@ -937,10 +1015,9 @@ retention_matrix.index = retention_matrix.index.strftime('%Y-%m')
 # ----------------------------------------------------
 # 3. Plot Cohort Retention Heatmap
 # ----------------------------------------------------
-plt.figure(figsize=(14, 8))
-plt.title('Monthly Customer Cohort Retention Matrix (%)', fontsize=14, fontweight='bold', pad=15)
+fig, ax = plt.subplots(figsize=(14, 8))
 
-ax = sns.heatmap(
+sns.heatmap(
     retention_matrix,
     annot=True,
     fmt='.0f',
@@ -948,27 +1025,39 @@ ax = sns.heatmap(
     cbar_kws={'label': 'Retention Rate (%)'},
     linewidths=0.5,
     vmin=0,
-    vmax=100
+    vmax=100,
+    ax=ax
 )
 
-# Format axis labels
-plt.xlabel('Months Since Subscription (Cohort Index)', fontweight='bold', labelpad=10)
-plt.ylabel('Subscription Cohort (Signup Month)', fontweight='bold', labelpad=10)
+ax.set_title('Monthly Customer Cohort Retention Matrix (%)', fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel('Months Since Subscription (Cohort Index)', fontweight='bold', labelpad=10)
+ax.set_ylabel('Subscription Cohort (Signup Month)', fontweight='bold', labelpad=10)
 plt.yticks(rotation=0)
 
 plt.tight_layout()
-plt.show()
+
+# Render heat map in Streamlit
+st.pyplot(fig)
+plt.close(fig)
 
 # ----------------------------------------------------
 # 4. Overall Monthly Retention Rate Summary
 # ----------------------------------------------------
-print("=== AVERAGE RETENTION RATE BY COHORT INDEX ===")
+st.subheader("Average Retention Rate Decay")
+
 avg_retention = retention_matrix.mean(axis=0).reset_index()
 avg_retention.columns = ['Months Since Signup', 'Avg Retention Rate (%)']
 avg_retention['Avg Retention Rate (%)'] = avg_retention['Avg Retention Rate (%)'].round(2)
 
-print(avg_retention.to_string(index=False))
+col1, col2 = st.columns([1, 2])
 
+with col1:
+    st.write("**Average Retention Data**")
+    st.dataframe(avg_retention, use_container_width=True)
+
+with col2:
+    st.write("**Retention Curve**")
+    st.line_chart(avg_retention.set_index('Months Since Signup'))
 """# Feature Engineering
 
 Feature Engineering for Customer-Level Model Snapshot Dataset (5,000 Rows)
@@ -991,177 +1080,163 @@ Churned Accounts (is_churned = 1): 1,634 customers (32.68% of the customer base)
 Active Accounts (is_churned = 0): 3,366 customers (67.32% retention rate).
 """
 
-# ----------------------------------------------------
-# 1. Determine Global Max Month & Account Status
-# ----------------------------------------------------
-max_global_month = analytical_df['activity_month'].max()
+# import streamlit as st
+import pandas as pd
 
-customer_tenure = (
-    analytical_df.groupby('customer_id')
-    .agg(
-        last_active_month=('activity_month', 'max'),
-        total_months_active=('months_since_sub', 'max'),
-        first_subscription_date=('subscription_date', 'min'),
+@st.cache_data
+def build_master_model_snapshot(df_analytical):
+    analytical_df = df_analytical.copy()
+
+    # ----------------------------------------------------
+    # 1. Determine Global Max Month & Account Status
+    # ----------------------------------------------------
+    max_global_month = analytical_df['activity_month'].max()
+
+    # Handle key naming variation safely
+    tenure_col = 'months_since_subscription' if 'months_since_subscription' in analytical_df.columns else 'months_since_sub'
+
+    customer_tenure = (
+        analytical_df.groupby('customer_id')
+        .agg(
+            last_active_month=('activity_month', 'max'),
+            total_months_active=(tenure_col, 'max'),
+            first_subscription_date=('subscription_date', 'min'),
+        )
+        .reset_index()
     )
-    .reset_index()
-)
 
-# Target variable: is_churned (1 = canceled prior to global max month, 0 = active)
-customer_tenure['is_churned'] = (
-    customer_tenure['last_active_month'] < max_global_month
-).astype(int)
+    # Target variable: is_churned (1 = canceled prior to global max month, 0 = active)
+    customer_tenure['is_churned'] = (
+        customer_tenure['last_active_month'] < max_global_month
+    ).astype(int)
 
-# ----------------------------------------------------
-# 2. Static Profile Features
-# ----------------------------------------------------
-static_profile_cols = [
-    'customer_id',
-    'company_size',
-    'industry',
-    'region',
-    'customer_type',
-]
-df_static_profiles = analytical_df[static_profile_cols].drop_duplicates(
-    subset=['customer_id']
-)
+    # ----------------------------------------------------
+    # 2. Static Profile Features
+    # ----------------------------------------------------
+    # Dynamically select static profile columns present in dataset
+    possible_static = ['customer_id', 'company_size', 'industry', 'region', 'customer_type']
+    static_profile_cols = [col for col in possible_static if col in analytical_df.columns]
 
-# ----------------------------------------------------
-# 3. Aggregated Lifetime Baseline Metrics
-# ----------------------------------------------------
-# Pre-calculate composite platform usage per record to eliminate severe multicollinearity
-analytical_df['total_platform_uses_record'] = (
-    analytical_df['feature_crm']
-    + analytical_df['feature_email_campaigns']
-    + analytical_df['feature_analytics']
-    + analytical_df['feature_automation']
-)
-
-lifetime_agg = (
-    analytical_df.groupby('customer_id')
-    .agg(
-        # Revenue & Plan
-        latest_plan_type=('plan_type', 'last'),
-        avg_monthly_revenue=('monthly_revenue', 'mean'),
-        # Product Usage (Aggregated Composite Feature to replace correlated raw features)
-        avg_session_duration=('session_duration', 'mean'),
-        total_platform_uses=('total_platform_uses_record', 'sum'),
-        # Engagement Volume AND Responsiveness Rate
-        avg_engagement_count=('engagement_count', 'mean'),  # Outreach Volume
-        engagement_rate=('response_rate', 'mean'),  # Customer Responsiveness %
-        latest_satisfaction_score=('satisfaction_score', 'last'),
-        latest_nps_score=('nps_score', 'last'),
+    df_static_profiles = analytical_df[static_profile_cols].drop_duplicates(
+        subset=['customer_id']
     )
-    .reset_index()
-)
 
-# Drop intermediate record-level composite column from analytical_df
-analytical_df.drop(columns=['total_platform_uses_record'], inplace=True)
+    # ----------------------------------------------------
+    # 3. Aggregated Lifetime Baseline Metrics
+    # ----------------------------------------------------
+    # Pre-calculate composite platform usage per record
+    feature_cols = ['feature_crm', 'feature_email_campaigns', 'feature_analytics', 'feature_automation']
+    existing_features = [c for c in feature_cols if c in analytical_df.columns]
+    
+    analytical_df['total_platform_uses_record'] = analytical_df[existing_features].sum(axis=1)
 
-# ----------------------------------------------------
-# 4. Feature Engineering: Pre-Churn Trend & Decay Signals
-# ----------------------------------------------------
-sorted_df = analytical_df.sort_values(['customer_id', 'activity_month'])
-
-recent_2mo_metrics = (
-    sorted_df.groupby('customer_id')
-    .tail(2)
-    .groupby('customer_id')
-    .agg(
-        recent_2mo_avg_session=('session_duration', 'mean'),
-        recent_2mo_avg_revenue=('monthly_revenue', 'mean'),
-        recent_2mo_engagement_rate=('response_rate', 'mean'),
-        recent_2mo_engagement_count=('engagement_count', 'mean'),
+    lifetime_agg = (
+        analytical_df.groupby('customer_id')
+        .agg(
+            latest_plan_type=('plan_type', 'last'),
+            avg_monthly_revenue=('monthly_revenue', 'mean'),
+            avg_session_duration=('session_duration', 'mean'),
+            total_platform_uses=('total_platform_uses_record', 'sum'),
+            avg_engagement_count=('engagement_count', 'mean'),
+            engagement_rate=('response_rate', 'mean'),
+            latest_satisfaction_score=('satisfaction_score', 'last'),
+            latest_nps_score=('nps_score', 'last'),
+        )
+        .reset_index()
     )
-    .reset_index()
-)
 
-lifetime_agg = pd.merge(lifetime_agg, recent_2mo_metrics, on='customer_id')
+    # ----------------------------------------------------
+    # 4. Feature Engineering: Pre-Churn Trend & Decay Signals
+    # ----------------------------------------------------
+    sorted_df = analytical_df.sort_values(['customer_id', 'activity_month'])
 
-# Trend Ratios (Recent 2-Mo Avg / Lifetime Avg)
-lifetime_agg['session_duration_decay_ratio'] = (
-    lifetime_agg['recent_2mo_avg_session']
-    / (lifetime_agg['avg_session_duration'] + 1e-5)
-).round(3)
+    recent_2mo_metrics = (
+        sorted_df.groupby('customer_id')
+        .tail(2)
+        .groupby('customer_id')
+        .agg(
+            recent_2mo_avg_session=('session_duration', 'mean'),
+            recent_2mo_avg_revenue=('monthly_revenue', 'mean'),
+            recent_2mo_engagement_rate=('response_rate', 'mean'),
+            recent_2mo_engagement_count=('engagement_count', 'mean'),
+        )
+        .reset_index()
+    )
 
-lifetime_agg['revenue_trend_ratio'] = (
-    lifetime_agg['recent_2mo_avg_revenue']
-    / (lifetime_agg['avg_monthly_revenue'] + 1e-5)
-).round(3)
+    lifetime_agg = pd.merge(lifetime_agg, recent_2mo_metrics, on='customer_id')
 
-lifetime_agg['engagement_trend_ratio'] = (
-    lifetime_agg['recent_2mo_engagement_rate']
-    / (lifetime_agg['engagement_rate'] + 1e-5)
-).round(3)
+    # Trend Ratios (Recent 2-Mo Avg / Lifetime Avg)
+    lifetime_agg['session_duration_decay_ratio'] = (
+        lifetime_agg['recent_2mo_avg_session']
+        / (lifetime_agg['avg_session_duration'] + 1e-5)
+    ).round(3)
 
-lifetime_agg['outreach_volume_trend_ratio'] = (
-    lifetime_agg['recent_2mo_engagement_count']
-    / (lifetime_agg['avg_engagement_count'] + 1e-5)
-).round(3)
+    lifetime_agg['revenue_trend_ratio'] = (
+        lifetime_agg['recent_2mo_avg_revenue']
+        / (lifetime_agg['avg_monthly_revenue'] + 1e-5)
+    ).round(3)
 
-# Drop intermediate raw recent averages
-lifetime_agg.drop(
-    columns=[
-        'recent_2mo_avg_session',
-        'recent_2mo_avg_revenue',
-        'recent_2mo_engagement_rate',
-        'recent_2mo_engagement_count',
-    ],
-    inplace=True,
-)
+    lifetime_agg['engagement_trend_ratio'] = (
+        lifetime_agg['recent_2mo_engagement_rate']
+        / (lifetime_agg['engagement_rate'] + 1e-5)
+    ).round(3)
+
+    lifetime_agg['outreach_volume_trend_ratio'] = (
+        lifetime_agg['recent_2mo_engagement_count']
+        / (lifetime_agg['avg_engagement_count'] + 1e-5)
+    ).round(3)
+
+    # Drop intermediate raw recent averages
+    lifetime_agg.drop(
+        columns=[
+            'recent_2mo_avg_session',
+            'recent_2mo_avg_revenue',
+            'recent_2mo_engagement_rate',
+            'recent_2mo_engagement_count',
+        ],
+        inplace=True,
+    )
+
+    # ----------------------------------------------------
+    # 5. Master Model Snapshot Assembly
+    # ----------------------------------------------------
+    model_snapshot = pd.merge(df_static_profiles, customer_tenure, on='customer_id')
+    model_snapshot = pd.merge(model_snapshot, lifetime_agg, on='customer_id')
+
+    model_snapshot.drop(
+        columns=['last_active_month', 'first_subscription_date'], inplace=True, errors='ignore'
+    )
+
+    # Impute missing sentiment scores with medians
+    model_snapshot['latest_satisfaction_score'] = model_snapshot[
+        'latest_satisfaction_score'
+    ].fillna(model_snapshot['latest_satisfaction_score'].median())
+    model_snapshot['latest_nps_score'] = model_snapshot['latest_nps_score'].fillna(
+        model_snapshot['latest_nps_score'].median()
+    )
+
+    return model_snapshot
+
+# Call cached feature engineering snapshot
+master_model_df = build_master_model_snapshot(model_df)
 
 # ----------------------------------------------------
-# 5. Master Model Snapshot Assembly
+# 6. Streamlit UI Display
 # ----------------------------------------------------
-model_df = pd.merge(df_static_profiles, customer_tenure, on='customer_id')
-model_df = pd.merge(model_df, lifetime_agg, on='customer_id')
+st.subheader("Master Model Snapshot Assembly")
 
-model_df.drop(
-    columns=['last_active_month', 'first_subscription_date'], inplace=True
-)
+# Metrics Cards
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Customer Records", f"{len(master_model_df):,}")
+col2.metric("Engineered Features", len(master_model_df.columns))
+col3.metric("Baseline Churn Rate", f"{master_model_df['is_churned'].mean() * 100:.1f}%")
 
-# Impute missing sentiment scores with medians
-model_df['latest_satisfaction_score'] = model_df[
-    'latest_satisfaction_score'
-].fillna(model_df['latest_satisfaction_score'].median())
-model_df['latest_nps_score'] = model_df['latest_nps_score'].fillna(
-    model_df['latest_nps_score'].median()
-)
-
-print("=== FINAL MODEL SNAPSHOT TABLE CREATED (Multicollinearity Reduced) ===")
-print(f"• Total Customer Rows : {len(model_df):,}")
-print(f"• Total Features      : {len(model_df.columns)}")
-display(model_df.head())
-
-"""Export Datasets"""
-
-import os
-
-# ----------------------------------------------------
-# 1. Define File Export Paths
-# ----------------------------------------------------
-ingested_filename = 'ingested_analytical_dataset_55k.csv'
-model_filename = 'model_snapshot_dataset_5k.csv'
-
-# ----------------------------------------------------
-# 2. Save DataFrames to CSV
-# ----------------------------------------------------
-# index=False ensures Pandas doesn't add an extra unwanted index column
-analytical_df.to_csv(ingested_filename, index=False)
-model_df.to_csv(model_filename, index=False)
-
-print("=== DATASETS EXPORTED LOCALLY ===")
-print(
-    f"1. Ingested Dataset  : '{ingested_filename}' ({len(analytical_df):,} rows)"
-)
-print(f"2. Model Table       : '{model_filename}' ({len(model_df):,} rows)")
-
-from google.colab import files
-
-# Trigger automatic browser download
-files.download(ingested_filename)
-files.download(model_filename)
-
-
+# Expandable Feature Matrix Inspector
+with st.expander("🔍 Inspect Master Model Feature Matrix"):
+    st.write("**Engineered Feature List:**")
+    st.write(list(master_model_df.columns))
+    st.write("**Snapshot Data Preview:**")
+    st.dataframe(master_model_df.head(10), use_container_width=True)
 
 """# **BASELINE MODELLING-Logistic regression and Random Forest**
 
@@ -1191,117 +1266,117 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+
+@st.cache_resource
+def train_and_eval_models(df):
+    # ----------------------------------------------------
+    # 1. Prepare Feature Set (X) and Target (y)
+    # ----------------------------------------------------
+    drop_cols = ['customer_id', 'is_churned']
+    if 'cluster_k2' in df.columns:
+        drop_cols.append('cluster_k2')
+
+    X = df.drop(columns=[col for col in drop_cols if col in df.columns]).copy()
+    y = df['is_churned']
+
+    if 'cluster_segment' in X.columns:
+        X['cluster_segment'] = X['cluster_segment'].astype('str')
+
+    num_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+    cat_cols = X.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
+
+    # ----------------------------------------------------
+    # 2. Encode Categoricals & Train-Test Split (80/20)
+    # ----------------------------------------------------
+    X_encoded = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_encoded, y, test_size=0.20, random_state=42, stratify=y
+    )
+
+    scaler = StandardScaler()
+    X_train_scaled = X_train.copy()
+    X_test_scaled = X_test.copy()
+
+    X_train_scaled[num_cols] = scaler.fit_transform(X_train[num_cols])
+    X_test_scaled[num_cols] = scaler.transform(X_test[num_cols])
+
+    # ----------------------------------------------------
+    # 3. Train Models
+    # ----------------------------------------------------
+    lr_model = LogisticRegression(random_state=42, max_iter=1000)
+    lr_model.fit(X_train_scaled, y_train)
+
+    rf_model = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=10,
+        min_samples_split=5,
+        class_weight='balanced',
+        random_state=42,
+        n_jobs=-1,
+    )
+    rf_model.fit(X_train, y_train)
+
+    # ----------------------------------------------------
+    # 4. Generate Predictions & Metrics
+    # ----------------------------------------------------
+    lr_pred = lr_model.predict(X_test_scaled)
+    lr_proba = lr_model.predict_proba(X_test_scaled)[:, 1]
+
+    rf_pred = rf_model.predict(X_test)
+    rf_proba = rf_model.predict_proba(X_test)[:, 1]
+
+    comparison_data = {
+        'Metric': [
+            'Accuracy',
+            'Precision (Class 1)',
+            'Recall (Class 1)',
+            'F1-Score (Class 1)',
+            'ROC-AUC',
+        ],
+        'Logistic Regression (Baseline)': [
+            f'{accuracy_score(y_test, lr_pred):.4f}',
+            f'{precision_score(y_test, lr_pred, pos_label=1):.4f}',
+            f'{recall_score(y_test, lr_pred, pos_label=1):.4f}',
+            f'{f1_score(y_test, lr_pred, pos_label=1):.4f}',
+            f'{roc_auc_score(y_test, lr_proba):.4f}',
+        ],
+        'Random Forest (Balanced)': [
+            f'{accuracy_score(y_test, rf_pred):.4f}',
+            f'{precision_score(y_test, rf_pred, pos_label=1):.4f}',
+            f'{recall_score(y_test, rf_pred, pos_label=1):.4f}',
+            f'{f1_score(y_test, rf_pred, pos_label=1):.4f}',
+            f'{roc_auc_score(y_test, rf_proba):.4f}',
+        ],
+    }
+
+    comparison_df = pd.DataFrame(comparison_data)
+    lr_report = classification_report(y_test, lr_pred)
+    rf_report = classification_report(y_test, rf_pred)
+
+    return comparison_df, lr_report, rf_report
+
+
+# Run model pipeline
+comp_df, lr_rep, rf_rep = train_and_eval_models(master_model_df)
+
 # ----------------------------------------------------
-# 1. Prepare Feature Set (X) and Target (y)
+# 5. UI Layout
 # ----------------------------------------------------
-drop_cols = ['customer_id', 'is_churned']
-if 'cluster_k2' in model_df.columns:
-    drop_cols.append('cluster_k2')
+st.subheader("Machine Learning Model Evaluation")
 
-X = model_df.drop(columns=drop_cols).copy()
-y = model_df['is_churned']
+st.write("**Side-by-Side Model Performance Comparison:**")
+st.dataframe(comp_df, use_container_width=True)
 
-# Ensure cluster_segment (k=6) is treated as categorical
-if 'cluster_segment' in X.columns:
-    X['cluster_segment'] = X['cluster_segment'].astype('str')
-
-# Identify numerical and categorical features
-num_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
-cat_cols = X.select_dtypes(
-    include=['object', 'category', 'string']
-).columns.tolist()
-
-# ----------------------------------------------------
-# 2. Encode Categoricals & Train-Test Split (80/20)
-# ----------------------------------------------------
-X_encoded = pd.get_dummies(X, columns=cat_cols, drop_first=True)
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X_encoded, y, test_size=0.20, random_state=42, stratify=y
-)
-
-# Standard Scale numerical features for Logistic Regression
-scaler = StandardScaler()
-X_train_scaled = X_train.copy()
-X_test_scaled = X_test.copy()
-
-X_train_scaled[num_cols] = scaler.fit_transform(X_train[num_cols])
-X_test_scaled[num_cols] = scaler.transform(X_test[num_cols])
-
-# ----------------------------------------------------
-# 3. Train Both Models
-# ----------------------------------------------------
-# Model A: Baseline Logistic Regression
-lr_model = LogisticRegression(random_state=42, max_iter=1000)
-lr_model.fit(X_train_scaled, y_train)
-
-# Model B: Random Forest (Balanced)
-rf_model = RandomForestClassifier(
-    n_estimators=200,
-    max_depth=10,
-    min_samples_split=5,
-    class_weight='balanced',
-    random_state=42,
-    n_jobs=-1,
-)
-rf_model.fit(X_train, y_train)
-
-# ----------------------------------------------------
-# 4. Generate Predictions & Metrics
-# ----------------------------------------------------
-# Predictions
-lr_pred = lr_model.predict(X_test_scaled)
-lr_proba = lr_model.predict_proba(X_test_scaled)[:, 1]
-
-rf_pred = rf_model.predict(X_test)
-rf_proba = rf_model.predict_proba(X_test)[:, 1]
-
-# Metric Calculations
-comparison_data = {
-    'Metric': [
-        'Accuracy',
-        'Precision (Class 1)',
-        'Recall (Class 1)',
-        'F1-Score (Class 1)',
-        'ROC-AUC',
-    ],
-    'Logistic Regression (Baseline)': [
-        f'{accuracy_score(y_test, lr_pred):.4f}',
-        f"{precision_score(y_test, lr_pred, pos_label=1):.4f}",
-        f"{recall_score(y_test, lr_pred, pos_label=1):.4f}",
-        f"{f1_score(y_test, lr_pred, pos_label=1):.4f}",
-        f'{roc_auc_score(y_test, lr_proba):.4f}',
-    ],
-    'Random Forest (Balanced)': [
-        f'{accuracy_score(y_test, rf_pred):.4f}',
-        f"{precision_score(y_test, rf_pred, pos_label=1):.4f}",
-        f"{recall_score(y_test, rf_pred, pos_label=1):.4f}",
-        f"{f1_score(y_test, rf_pred, pos_label=1):.4f}",
-        f'{roc_auc_score(y_test, rf_proba):.4f}',
-    ],
-}
-
-comparison_df = pd.DataFrame(comparison_data)
-
-# ----------------------------------------------------
-# 5. Output Results Side-by-Side
-# ----------------------------------------------------
-
-print("\n---------------------------------------------------------------------")
-print("--- 1. DETAILED REPORT: LOGISTIC REGRESSION (BASELINE) ---")
-print("---------------------------------------------------------------------")
-print(classification_report(y_test, lr_pred))
-
-print("\n---------------------------------------------------------------------")
-print("--- 2. DETAILED REPORT: RANDOM FOREST (BALANCED) ---")
-print("---------------------------------------------------------------------")
-print(classification_report(y_test, rf_pred))
-
-print("=====================================================================")
-print("             SIDE-BY-SIDE MODEL PERFORMANCE COMPARISON               ")
-print("=====================================================================\n")
-display(comparison_df)
-
+with st.expander("Detailed Classification Reports"):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Logistic Regression (Baseline)**")
+        st.code(lr_rep)
+    with col2:
+        st.write("**Random Forest (Balanced)**")
+        st.code(rf_rep)
+        
 """# **Customer Segmentation (Kmeans Clustering)**
 
 **Goal**
@@ -1323,17 +1398,22 @@ k =  8 | Silhouette Score: 0.2578 | WCSS: 20,252.16  <-- Granular Peak
 Selected Model: k=3 was chosen as the baseline segment feature (cluster_segment) for downstream predictive modeling to maximize cluster stability and mathematical separation without over-segmenting the dataset.
 """
 
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
 
+st.subheader("K-Means Clustering Optimization")
 
 # ----------------------------------------------------
-# 1. Prepare Feature Set for Clustering
+# 1. Prepare Feature Set & Cached Optimization Function
 # ----------------------------------------------------
 clustering_features = [
     'avg_session_duration',
     'total_months_active',
-    'total_platform_uses',  # Combined composite usage feature
+    'total_platform_uses',
     'avg_engagement_count',
     'engagement_rate',
     'latest_satisfaction_score',
@@ -1344,53 +1424,73 @@ clustering_features = [
     'outreach_volume_trend_ratio',
 ]
 
-X_cluster = model_df[clustering_features].copy()
+# Ensure required features exist in model_df
+available_cluster_features = [f for f in clustering_features if f in master_model_df.columns]
 
-# Scale features to equalize distance metrics
-cluster_scaler = StandardScaler()
-X_cluster_scaled = cluster_scaler.fit_transform(X_cluster)
+@st.cache_data
+def evaluate_kmeans_clusters(df, feature_list):
+    X_cluster = df[feature_list].copy()
+    
+    # Scale features
+    cluster_scaler = StandardScaler()
+    X_cluster_scaled = cluster_scaler.fit_transform(X_cluster)
+
+    k_range = range(2, 11)
+    wcss = []
+    silhouette_scores = []
+
+    for k in k_range:
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        kmeans.fit(X_cluster_scaled)
+
+        wcss.append(kmeans.inertia_)
+        score = silhouette_score(X_cluster_scaled, kmeans.labels_)
+        silhouette_scores.append(score)
+
+    metrics_df = pd.DataFrame({
+        'Number of Clusters (k)': list(k_range),
+        'Silhouette Score': [round(s, 4) for s in silhouette_scores],
+        'Inertia (WCSS)': [round(w, 2) for w in wcss]
+    })
+
+    return metrics_df, k_range, wcss, silhouette_scores
+
+# Run cached evaluation
+cluster_metrics_df, k_range, wcss, silhouette_scores = evaluate_kmeans_clusters(
+    master_model_df, available_cluster_features
+)
 
 # ----------------------------------------------------
-# 2. Elbow Method & Silhouette Analysis (k=2 to 10)
+# 2. Render Diagnostic Plots in Streamlit
 # ----------------------------------------------------
-k_range = range(2, 11)
-wcss = []  # Within-Cluster Sum of Squares (Inertia)
-silhouette_scores = []
-
-for k in k_range:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    kmeans.fit(X_cluster_scaled)
-
-    wcss.append(kmeans.inertia_)
-    score = silhouette_score(X_cluster_scaled, kmeans.labels_)
-    silhouette_scores.append(score)
-
-# ----------------------------------------------------
-# 3. Plot Diagnostics (Elbow Curve & Silhouette Scores)
-# ----------------------------------------------------
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 # Elbow Method Plot
-ax1.plot(k_range, wcss, marker='o', linestyle='--', color='b')
-ax1.set_title('Elbow Method (WCSS vs. K)')
+ax1.plot(k_range, wcss, marker='o', linestyle='--', color='#1f77b4')
+ax1.set_title('Elbow Method (WCSS vs. K)', fontweight='bold')
 ax1.set_xlabel('Number of Clusters (k)')
 ax1.set_ylabel('Inertia (WCSS)')
-ax1.grid(True)
+ax1.grid(True, linestyle=':', alpha=0.6)
 
 # Silhouette Score Plot
-ax2.plot(k_range, silhouette_scores, marker='s', linestyle='--', color='g')
-ax2.set_title('Silhouette Score vs. K')
+ax2.plot(k_range, silhouette_scores, marker='s', linestyle='--', color='#2ca02c')
+ax2.set_title('Silhouette Score vs. K', fontweight='bold')
 ax2.set_xlabel('Number of Clusters (k)')
 ax2.set_ylabel('Silhouette Score')
-ax2.grid(True)
+ax2.grid(True, linestyle=':', alpha=0.6)
 
 plt.tight_layout()
-plt.show()
 
-# Print Silhouette Scores Table
-print("=== CLUSTER OPTIMIZATION METRICS ===")
-for k, score, inertia in zip(k_range, silhouette_scores, wcss):
-    print(f"k = {k:2d} | Silhouette Score: {score:.4f} | WCSS: {inertia:,.2f}")
+# Render plot on UI
+st.pyplot(fig)
+plt.close(fig)
+
+# ----------------------------------------------------
+# 3. Output Optimization Metrics
+# ----------------------------------------------------
+with st.expander("View Detailed Clustering Metrics Table"):
+    st.dataframe(cluster_metrics_df, use_container_width=True)
+    
 
 """### **Segmentation using K=3**
 
@@ -1424,161 +1524,171 @@ Cluster 0: Assign dedicated Account Executives to secure multi-year annual renew
 Cluster 1: Deploy automated, self-serve onboarding guides in Weeks 1–4 to reduce early account drop-off.
 Cluster 2: Target accounts with feature enablement playbooks and incentives to drive Pro and Enterprise plan upgrades
 """
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+st.subheader("Final Customer Segmentation (K-Means, k = 3)")
 
 # ----------------------------------------------------
-# 1. Fit Final K-Means Model (k = 3)
+# 1. Fit Final K-Means Model & Profile (Cached)
 # ----------------------------------------------------
-optimal_k = 3
+@st.cache_data
+def run_final_clustering(df, optimal_k=3):
+    model_df_clustered = df.copy()
 
-clustering_features = [
-    'avg_session_duration',
-    'total_months_active',
-    'total_platform_uses',  # Updated composite usage feature
-    'avg_engagement_count',
-    'engagement_rate',
-    'latest_satisfaction_score',
-    'latest_nps_score',
-    'session_duration_decay_ratio',
-    'revenue_trend_ratio',
-    'engagement_trend_ratio',
-    'outreach_volume_trend_ratio',
-]
+    clustering_features = [
+        'avg_session_duration',
+        'total_months_active',
+        'total_platform_uses',
+        'avg_engagement_count',
+        'engagement_rate',
+        'latest_satisfaction_score',
+        'latest_nps_score',
+        'session_duration_decay_ratio',
+        'revenue_trend_ratio',
+        'engagement_trend_ratio',
+        'outreach_volume_trend_ratio',
+    ]
 
-# Scale feature set
-cluster_scaler = StandardScaler()
-X_cluster_scaled = cluster_scaler.fit_transform(model_df[clustering_features])
+    # Verify existing features dynamically
+    available_features = [f for f in clustering_features if f in model_df_clustered.columns]
 
-# Train K-Means & assign cluster labels
-kmeans_3 = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-model_df['cluster_segment'] = kmeans_3.fit_predict(X_cluster_scaled)
+    # Scale feature set
+    cluster_scaler = StandardScaler()
+    X_cluster_scaled = cluster_scaler.fit_transform(model_df_clustered[available_features])
 
-print(
-    f'=== K-MEANS CLUSTERING COMPLETED ({optimal_k} Segments Assigned) ==='
-)
-print(model_df['cluster_segment'].value_counts().sort_index())
+    # Train K-Means & assign cluster labels
+    kmeans_3 = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+    model_df_clustered['cluster_segment'] = kmeans_3.fit_predict(X_cluster_scaled)
 
-# ----------------------------------------------------
-# 2. Numerical Profiling: Behavioral, Usage, Revenue & Retention Metrics
-# ----------------------------------------------------
-profile_metrics = [
-    'total_months_active',  # Tenure
-    'avg_monthly_revenue',  # Revenue Contribution
-    'is_churned',  # Churn Rate
-    'avg_session_duration',  # Usage Depth
-    'total_platform_uses',  # Composite Platform Usage
-    'avg_engagement_count',  # Outreach Volume
-    'engagement_rate',  # Customer Responsiveness
-    'latest_satisfaction_score',
-    'latest_nps_score',
-    'session_duration_decay_ratio',  # Activity Trend
-    'revenue_trend_ratio',
-]
+    # Profiling numerical metrics
+    profile_metrics = [
+        'total_months_active',
+        'avg_monthly_revenue',
+        'is_churned',
+        'avg_session_duration',
+        'total_platform_uses',
+        'avg_engagement_count',
+        'engagement_rate',
+        'latest_satisfaction_score',
+        'latest_nps_score',
+        'session_duration_decay_ratio',
+        'revenue_trend_ratio',
+    ]
+    available_profile_metrics = [m for m in profile_metrics if m in model_df_clustered.columns]
 
-cluster_numerical_summary = (
-    model_df.groupby('cluster_segment')[profile_metrics]
-    .mean()
-    .round(2)
-    .reset_index()
-)
-
-# Convert churn mean to percentage
-cluster_numerical_summary['churn_rate_%'] = (
-    cluster_numerical_summary['is_churned'] * 100
-).round(1)
-
-# Add customer count per segment
-cluster_counts = (
-    model_df['cluster_segment'].value_counts().sort_index().reset_index()
-)
-cluster_counts.columns = ['cluster_segment', 'customer_count']
-cluster_summary = pd.merge(
-    cluster_counts, cluster_numerical_summary, on='cluster_segment'
-)
-
-# ----------------------------------------------------
-# 3. Categorical Profiling: Demographics & Plan Types
-# ----------------------------------------------------
-plan_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['latest_plan_type'],
-        normalize='index',
+    cluster_numerical_summary = (
+        model_df_clustered.groupby('cluster_segment')[available_profile_metrics]
+        .mean()
+        .round(2)
+        .reset_index()
     )
-    * 100
-).round(1)
-industry_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['industry'],
-        normalize='index',
-    )
-    * 100
-).round(1)
-company_size_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['company_size'],
-        normalize='index',
-    )
-    * 100
-).round(1)
 
-# Display Summaries
-print('\n--- 1. Numerical & Behavioral Profile Table ---')
-display(cluster_summary.style.background_gradient(cmap='Blues'))
+    if 'is_churned' in cluster_numerical_summary.columns:
+        cluster_numerical_summary['churn_rate_%'] = (
+            cluster_numerical_summary['is_churned'] * 100
+        ).round(1)
 
-print('\n--- 2. Plan Type Distribution (%) Per Cluster ---')
-display(plan_breakdown)
+    cluster_counts = (
+        model_df_clustered['cluster_segment'].value_counts().sort_index().reset_index()
+    )
+    cluster_counts.columns = ['cluster_segment', 'customer_count']
+    cluster_summary = pd.merge(
+        cluster_counts, cluster_numerical_summary, on='cluster_segment'
+    )
+
+    return model_df_clustered, cluster_summary
+
+# Execute cached clustering on master dataset
+master_model_df, cluster_summary = run_final_clustering(master_model_df, optimal_k=3)
 
 # ----------------------------------------------------
-# 4. Visualizations: Churn Rate & Revenue Contribution by Segment
+# 2. Display Numerical Profiling Table
 # ----------------------------------------------------
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+st.write("**Customer Segment Profiles (Averages per Cluster):**")
+st.dataframe(cluster_summary, use_container_width=True)
+
+# ----------------------------------------------------
+# 3. Categorical Profiling (Safe Dynamic Crosstabs)
+# ----------------------------------------------------
+with st.expander("Categorical & Demographic Distributions (%)"):
+    cat_cols_to_check = ['latest_plan_type', 'industry', 'company_size']
+    
+    for col in cat_cols_to_check:
+        if col in master_model_df.columns:
+            st.write(f"**{col.replace('_', ' ').title()} Distribution (%)**")
+            breakdown = (
+                pd.crosstab(
+                    master_model_df['cluster_segment'],
+                    master_model_df[col],
+                    normalize='index',
+                )
+                * 100
+            ).round(1)
+            st.dataframe(breakdown, use_container_width=True)
+
+# ----------------------------------------------------
+# 4. Visualizations: Churn Rate & Revenue Contribution
+# ----------------------------------------------------
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 # Churn Rate Comparison
-sns.barplot(
-    data=cluster_summary,
-    x='cluster_segment',
-    y='churn_rate_%',
-    palette='Reds_d',
-    ax=ax1,
-)
-ax1.set_title('Churn Rate (%) by Customer Cluster Segment', fontsize=12)
-ax1.set_xlabel('Cluster Segment')
-ax1.set_ylabel('Churn Rate (%)')
-for p in ax1.patches:
-    ax1.annotate(
-        f'{p.get_height():.1f}%',
-        (p.get_x() + p.get_width() / 2.0, p.get_height()),
-        ha='center',
-        va='bottom',
-        xytext=(0, 3),
-        textcoords='offset points',
+if 'churn_rate_%' in cluster_summary.columns:
+    sns.barplot(
+        data=cluster_summary,
+        x='cluster_segment',
+        y='churn_rate_%',
+        hue='cluster_segment',
+        legend=False,
+        palette='Reds_d',
+        ax=ax1,
     )
+    ax1.set_title('Churn Rate (%) by Cluster Segment', fontweight='bold')
+    ax1.set_xlabel('Cluster Segment')
+    ax1.set_ylabel('Churn Rate (%)')
+    for p in ax1.patches:
+        if p.get_height() > 0:
+            ax1.annotate(
+                f'{p.get_height():.1f}%',
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha='center', va='bottom',
+                xytext=(0, 3), textcoords='offset points',
+                fontweight='bold'
+            )
 
 # Average Monthly Revenue Contribution
-sns.barplot(
-    data=cluster_summary,
-    x='cluster_segment',
-    y='avg_monthly_revenue',
-    palette='Greens_d',
-    ax=ax2,
-)
-ax2.set_title('Average Monthly Revenue ($) by Cluster Segment', fontsize=12)
-ax2.set_xlabel('Cluster Segment')
-ax2.set_ylabel('Avg Monthly Revenue ($)')
-for p in ax2.patches:
-    ax2.annotate(
-        f'${p.get_height():.2f}',
-        (p.get_x() + p.get_width() / 2.0, p.get_height()),
-        ha='center',
-        va='bottom',
-        xytext=(0, 3),
-        textcoords='offset points',
+if 'avg_monthly_revenue' in cluster_summary.columns:
+    sns.barplot(
+        data=cluster_summary,
+        x='cluster_segment',
+        y='avg_monthly_revenue',
+        hue='cluster_segment',
+        legend=False,
+        palette='Greens_d',
+        ax=ax2,
     )
+    ax2.set_title('Avg Monthly Revenue ($) by Cluster Segment', fontweight='bold')
+    ax2.set_xlabel('Cluster Segment')
+    ax2.set_ylabel('Avg Monthly Revenue ($)')
+    for p in ax2.patches:
+        if p.get_height() > 0:
+            ax2.annotate(
+                f'${p.get_height():.2f}',
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha='center', va='bottom',
+                xytext=(0, 3), textcoords='offset points',
+                fontweight='bold'
+            )
 
 plt.tight_layout()
-plt.show()
+
+# Render plot in Streamlit app
+st.pyplot(fig)
+plt.close(fig)
 
 """
 # **Segmentation using k=8**
@@ -1614,160 +1724,171 @@ Late Decay (Cluster 1): Customers leaving in Month 12 because they slowly stoppe
 
 """
 
-# ----------------------------------------------------
-# 1. Fit Final K-Means Model (k = 8)
-# ----------------------------------------------------
-optimal_k = 8
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
-clustering_features = [
-    'avg_session_duration',
-    'total_months_active',
-    'total_platform_uses',  # Updated composite usage feature
-    'avg_engagement_count',
-    'engagement_rate',
-    'latest_satisfaction_score',
-    'latest_nps_score',
-    'session_duration_decay_ratio',
-    'revenue_trend_ratio',
-    'engagement_trend_ratio',
-    'outreach_volume_trend_ratio',
-]
-
-# Scale feature set
-cluster_scaler = StandardScaler()
-X_cluster_scaled = cluster_scaler.fit_transform(model_df[clustering_features])
-
-# Train K-Means & assign cluster labels
-kmeans_8 = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-model_df['cluster_segment'] = kmeans_8.fit_predict(X_cluster_scaled)
-
-print(
-    f'=== K-MEANS CLUSTERING COMPLETED ({optimal_k} Segments Assigned) ==='
-)
-print(model_df['cluster_segment'].value_counts().sort_index())
+st.subheader("📊 Granular Customer Segmentation (K-Means, k = 8)")
 
 # ----------------------------------------------------
-# 2. Numerical Profiling: Behavioral, Usage, Revenue & Retention Metrics
+# 1. Fit Final K-Means Model & Profile (Cached for k=8)
 # ----------------------------------------------------
-profile_metrics = [
-    'total_months_active',  # Tenure
-    'avg_monthly_revenue',  # Revenue Contribution
-    'is_churned',  # Churn Rate
-    'avg_session_duration',  # Usage Depth
-    'total_platform_uses',  # Composite Platform Usage
-    'avg_engagement_count',  # Outreach Volume
-    'engagement_rate',  # Customer Responsiveness
-    'latest_satisfaction_score',
-    'latest_nps_score',
-    'session_duration_decay_ratio',  # Activity Trend
-    'revenue_trend_ratio',
-]
+@st.cache_data
+def run_granular_clustering(df, optimal_k=8):
+    model_df_clustered = df.copy()
 
-cluster_numerical_summary = (
-    model_df.groupby('cluster_segment')[profile_metrics]
-    .mean()
-    .round(2)
-    .reset_index()
-)
+    clustering_features = [
+        'avg_session_duration',
+        'total_months_active',
+        'total_platform_uses',
+        'avg_engagement_count',
+        'engagement_rate',
+        'latest_satisfaction_score',
+        'latest_nps_score',
+        'session_duration_decay_ratio',
+        'revenue_trend_ratio',
+        'engagement_trend_ratio',
+        'outreach_volume_trend_ratio',
+    ]
 
-# Convert churn mean to percentage
-cluster_numerical_summary['churn_rate_%'] = (
-    cluster_numerical_summary['is_churned'] * 100
-).round(1)
+    # Verify existing features dynamically
+    available_features = [f for f in clustering_features if f in model_df_clustered.columns]
 
-# Add customer count per segment
-cluster_counts = (
-    model_df['cluster_segment'].value_counts().sort_index().reset_index()
-)
-cluster_counts.columns = ['cluster_segment', 'customer_count']
-cluster_summary = pd.merge(
-    cluster_counts, cluster_numerical_summary, on='cluster_segment'
-)
+    # Scale feature set
+    cluster_scaler = StandardScaler()
+    X_cluster_scaled = cluster_scaler.fit_transform(model_df_clustered[available_features])
 
-# ----------------------------------------------------
-# 3. Categorical Profiling: Demographics & Plan Types
-# ----------------------------------------------------
-plan_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['latest_plan_type'],
-        normalize='index',
+    # Train K-Means & assign cluster labels
+    kmeans_8 = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+    model_df_clustered['cluster_segment'] = kmeans_8.fit_predict(X_cluster_scaled)
+
+    # Profiling numerical metrics
+    profile_metrics = [
+        'total_months_active',
+        'avg_monthly_revenue',
+        'is_churned',
+        'avg_session_duration',
+        'total_platform_uses',
+        'avg_engagement_count',
+        'engagement_rate',
+        'latest_satisfaction_score',
+        'latest_nps_score',
+        'session_duration_decay_ratio',
+        'revenue_trend_ratio',
+    ]
+    available_profile_metrics = [m for m in profile_metrics if m in model_df_clustered.columns]
+
+    cluster_numerical_summary = (
+        model_df_clustered.groupby('cluster_segment')[available_profile_metrics]
+        .mean()
+        .round(2)
+        .reset_index()
     )
-    * 100
-).round(1)
-industry_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['industry'],
-        normalize='index',
-    )
-    * 100
-).round(1)
-company_size_breakdown = (
-    pd.crosstab(
-        model_df['cluster_segment'],
-        model_df['company_size'],
-        normalize='index',
-    )
-    * 100
-).round(1)
 
-# Display Summaries
-print('\n--- 1. Numerical & Behavioral Profile Table ---')
-display(cluster_summary.style.background_gradient(cmap='Blues'))
+    if 'is_churned' in cluster_numerical_summary.columns:
+        cluster_numerical_summary['churn_rate_%'] = (
+            cluster_numerical_summary['is_churned'] * 100
+        ).round(1)
 
-print('\n--- 2. Plan Type Distribution (%) Per Cluster ---')
-display(plan_breakdown)
+    cluster_counts = (
+        model_df_clustered['cluster_segment'].value_counts().sort_index().reset_index()
+    )
+    cluster_counts.columns = ['cluster_segment', 'customer_count']
+    cluster_summary = pd.merge(
+        cluster_counts, cluster_numerical_summary, on='cluster_segment'
+    )
+
+    return model_df_clustered, cluster_summary
+
+# Execute cached clustering
+master_model_df, cluster_summary = run_granular_clustering(master_model_df, optimal_k=8)
 
 # ----------------------------------------------------
-# 4. Visualizations: Churn Rate & Revenue Contribution by Segment
+# 2. Display Numerical Profiling Table
+# ----------------------------------------------------
+st.write("**8-Cluster Segment Profiles (Averages per Segment):**")
+st.dataframe(cluster_summary, use_container_width=True)
+
+# ----------------------------------------------------
+# 3. Categorical Profiling (Safe Dynamic Crosstabs)
+# ----------------------------------------------------
+with st.expander("🏢 Categorical & Demographic Distributions (%) across 8 Clusters"):
+    cat_cols_to_check = ['latest_plan_type', 'industry', 'company_size']
+    
+    for col in cat_cols_to_check:
+        if col in master_model_df.columns:
+            st.write(f"**{col.replace('_', ' ').title()} Distribution (%)**")
+            breakdown = (
+                pd.crosstab(
+                    master_model_df['cluster_segment'],
+                    master_model_df[col],
+                    normalize='index',
+                )
+                * 100
+            ).round(1)
+            st.dataframe(breakdown, use_container_width=True)
+
+# ----------------------------------------------------
+# 4. Visualizations: Churn Rate & Revenue Contribution
 # ----------------------------------------------------
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
 
 # Churn Rate Comparison
-sns.barplot(
-    data=cluster_summary,
-    x='cluster_segment',
-    y='churn_rate_%',
-    palette='Reds_d',
-    ax=ax1,
-)
-ax1.set_title('Churn Rate (%) by Customer Cluster Segment', fontsize=12)
-ax1.set_xlabel('Cluster Segment')
-ax1.set_ylabel('Churn Rate (%)')
-for p in ax1.patches:
-    ax1.annotate(
-        f'{p.get_height():.1f}%',
-        (p.get_x() + p.get_width() / 2.0, p.get_height()),
-        ha='center',
-        va='bottom',
-        xytext=(0, 3),
-        textcoords='offset points',
+if 'churn_rate_%' in cluster_summary.columns:
+    sns.barplot(
+        data=cluster_summary,
+        x='cluster_segment',
+        y='churn_rate_%',
+        hue='cluster_segment',
+        legend=False,
+        palette='Reds_d',
+        ax=ax1,
     )
+    ax1.set_title('Churn Rate (%) across 8 Cluster Segments', fontweight='bold')
+    ax1.set_xlabel('Cluster Segment')
+    ax1.set_ylabel('Churn Rate (%)')
+    for p in ax1.patches:
+        if p.get_height() > 0:
+            ax1.annotate(
+                f'{p.get_height():.1f}%',
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha='center', va='bottom',
+                xytext=(0, 3), textcoords='offset points',
+                fontsize=9, fontweight='bold'
+            )
 
 # Average Monthly Revenue Contribution
-sns.barplot(
-    data=cluster_summary,
-    x='cluster_segment',
-    y='avg_monthly_revenue',
-    palette='Greens_d',
-    ax=ax2,
-)
-ax2.set_title('Average Monthly Revenue ($) by Cluster Segment', fontsize=12)
-ax2.set_xlabel('Cluster Segment')
-ax2.set_ylabel('Avg Monthly Revenue ($)')
-for p in ax2.patches:
-    ax2.annotate(
-        f'${p.get_height():.2f}',
-        (p.get_x() + p.get_width() / 2.0, p.get_height()),
-        ha='center',
-        va='bottom',
-        xytext=(0, 3),
-        textcoords='offset points',
+if 'avg_monthly_revenue' in cluster_summary.columns:
+    sns.barplot(
+        data=cluster_summary,
+        x='cluster_segment',
+        y='avg_monthly_revenue',
+        hue='cluster_segment',
+        legend=False,
+        palette='Greens_d',
+        ax=ax2,
     )
+    ax2.set_title('Avg Monthly Revenue ($) across 8 Cluster Segments', fontweight='bold')
+    ax2.set_xlabel('Cluster Segment')
+    ax2.set_ylabel('Avg Monthly Revenue ($)')
+    for p in ax2.patches:
+        if p.get_height() > 0:
+            ax2.annotate(
+                f'${p.get_height():.2f}',
+                (p.get_x() + p.get_width() / 2.0, p.get_height()),
+                ha='center', va='bottom',
+                xytext=(0, 3), textcoords='offset points',
+                fontsize=9, fontweight='bold'
+            )
 
 plt.tight_layout()
-plt.show()
+
+# Render plot in Streamlit app
+st.pyplot(fig)
+plt.close(fig)
 
 """# **Churn Analysis**
 
@@ -1794,137 +1915,88 @@ This proves that disengagement begins early—well before actual account cancell
 At the 2-year mark, churn ticks back up across all tiers to 29.83% (Enterprise reaching 31.3%). This highlights a critical contract renewal or platform re-evaluation window.
 """
 
-data = model_df.copy()
 
-# 1. Bin total_months_active into strict 24-Month Cohorts
-tenure_bins = [0, 3, 6, 12, 18, 24]
-tenure_labels = [
-    '0–3 Mos (Onboarding)',
-    '4–6 Mos (Early Adoption)',
-    '7–12 Mos (Mid Tenure)',
-    '13–18 Mos (Late Tenure)',
-    '19–24 Mos (Mature / Renewal)',
-]
+st.subheader("24-Month Tenure Cohort & Churn Timing Matrix")
 
-data['tenure_cohort'] = pd.cut(
-    data['total_months_active'],
-    bins=tenure_bins,
-    labels=tenure_labels,
-    include_lowest=True,
-)
+# ----------------------------------------------------
+# 1. Prepare Tenure Cohort Data (Cached)
+# ----------------------------------------------------
+@st.cache_data
+def analyze_tenure_cohorts(df):
+    data = df.copy()
 
-# 2. Build Churn Timing Matrix
-churn_timing_matrix = (
-    data.groupby(['tenure_cohort', 'latest_plan_type'], observed=False)[
-        'is_churned'
+    # Bin total_months_active into strict 24-Month Cohorts
+    tenure_bins = [0, 3, 6, 12, 18, 24]
+    tenure_labels = [
+        '0–3 Mos (Onboarding)',
+        '4–6 Mos (Early Adoption)',
+        '7–12 Mos (Mid Tenure)',
+        '13–18 Mos (Late Tenure)',
+        '19–24 Mos (Mature / Renewal)',
     ]
-    .mean()
-    .unstack()
-    * 100
-)
 
-# 3. Plot Churn Rate Heatmap
-plt.figure(figsize=(10, 5))
+    data['tenure_cohort'] = pd.cut(
+        data['total_months_active'],
+        bins=tenure_bins,
+        labels=tenure_labels,
+        include_lowest=True,
+    )
+
+    # Build Churn Timing Matrix
+    churn_timing_matrix = (
+        data.groupby(['tenure_cohort', 'latest_plan_type'], observed=False)[
+            'is_churned'
+        ]
+        .mean()
+        .unstack()
+        * 100
+    )
+
+    # Build Summary Table
+    summary_table = data.groupby('tenure_cohort', observed=False).agg(
+        customer_count=('customer_id', 'count'),
+        churn_rate_pct=('is_churned', lambda x: (x.mean() * 100) if len(x) > 0 else 0.0),
+        avg_decay_ratio=('session_duration_decay_ratio', 'mean'),
+        avg_monthly_rev=('avg_monthly_revenue', 'mean'),
+    ).round(2).reset_index()
+
+    return churn_timing_matrix, summary_table
+
+# Run cached function
+churn_timing_matrix, summary_table = analyze_tenure_cohorts(master_model_df)
+
+# ----------------------------------------------------
+# 2. Render Heatmap Plot
+# ----------------------------------------------------
+fig, ax = plt.subplots(figsize=(10, 5))
+
 sns.heatmap(
     churn_timing_matrix,
     annot=True,
     fmt='.1f',
     cmap='OrRd',
     cbar_kws={'label': 'Churn Rate (%)'},
+    ax=ax
 )
-plt.title(
+
+ax.set_title(
     '24-Month Cohort Churn Rate (%) across Plan Types',
     fontsize=13,
     fontweight='bold',
+    pad=12
 )
-plt.xlabel('Plan Type', fontsize=11)
-plt.ylabel('Tenure Cohort', fontsize=11)
+ax.set_xlabel('Plan Type', fontsize=11)
+ax.set_ylabel('Tenure Cohort', fontsize=11)
+
 plt.tight_layout()
-plt.show()
 
-# 4. Display Summary Table
-summary_table = data.groupby('tenure_cohort', observed=False).agg(
-    customer_count=('customer_id', 'count'),
-    churn_rate_pct=('is_churned', lambda x: x.mean() * 100),
-    avg_decay_ratio=('session_duration_decay_ratio', 'mean'),
-    avg_monthly_rev=('avg_monthly_revenue', 'mean'),
-)
+# Render in Streamlit
+st.pyplot(fig)
+plt.close(fig)
 
-print('--- 24-MONTH TENURE COHORT SUMMARY ---')
-display(summary_table.round(2))
-
-"""### **Interactive Dashboard**"""
-
-# Commented out IPython magic to ensure Python compatibility.
-# %%writefile app.py
-# import streamlit as st
-# import pandas as pd
-# import numpy as np
-# import plotly.express as px
-# import plotly.graph_objects as go
-# 
-# st.set_page_config(layout="wide", page_title="GrowthFlow Analytics")
-# 
-# st.title("GrowthFlow Executive Analytics Dashboard")
-# st.markdown("Cohort Retention, Segmentation, Churn Timing & Revenue Insights")
-# 
-# # 1. Load Data
-# @st.cache_data
-# def load_data():
-#     try:
-#         return pd.read_csv("model_df.csv")
-#     except:
-#         return model_df.copy()
-# 
-# df_dash = load_data()
-# 
-# tenure_bins = [0, 3, 6, 12, 18, 24]
-# tenure_labels = ['0–3 Mos', '4–6 Mos', '7–12 Mos', '13–18 Mos', '19–24 Mos']
-# df_dash['tenure_cohort'] = pd.cut(
-#     df_dash['total_months_active'],
-#     bins=tenure_bins,
-#     labels=tenure_labels,
-#     include_lowest=True,
-# )
-# 
-# # 2. Key Metrics
-# col1, col2, col3, col4 = st.columns(4)
-# col1.metric("Total Customers", f"{len(df_dash):,}")
-# col2.metric("Overall Churn Rate", f"{df_dash['is_churned'].mean()*100:.1f}%" if len(df_dash) > 0 else "0%")
-# col3.metric("Avg Monthly Revenue", f"${df_dash['avg_monthly_revenue'].mean():.2f}" if len(df_dash) > 0 else "$0")
-# col4.metric("Avg Decay Ratio", f"{df_dash['session_duration_decay_ratio'].mean():.2f}" if len(df_dash) > 0 else "0")
-# 
-# st.divider()
-# 
-# # 3. Charts Row 1
-# c1, c2 = st.columns(2)
-# 
-# with c1:
-#     st.subheader("Cohort Retention Heatmap (%)")
-#     matrix = df_dash.groupby(['tenure_cohort', 'latest_plan_type'], observed=False)['is_churned'].mean().unstack() * 100
-#     retention_matrix = 100 - matrix
-#     fig_heatmap = px.imshow(retention_matrix, text_auto='.1f', color_continuous_scale='Blues')
-#     st.plotly_chart(fig_heatmap, use_container_width=True)
-# 
-# with c2:
-#     st.subheader("Monthly Revenue Density by Cohort")
-#     rev_df = df_dash.groupby(['tenure_cohort', 'latest_plan_type'], observed=False)['avg_monthly_revenue'].mean().reset_index()
-#     fig_rev = px.bar(rev_df, x='tenure_cohort', y='avg_monthly_revenue', color='latest_plan_type', barmode='group')
-#     st.plotly_chart(fig_rev, use_container_width=True)
-# 
-# # 4. Charts Row 2
-# c3, c4 = st.columns(2)
-# 
-# with c3:
-#     st.subheader("Customer Distribution")
-#     fig_sunburst = px.sunburst(df_dash, path=['industry', 'latest_plan_type'], values='avg_monthly_revenue', color='latest_plan_type')
-#     st.plotly_chart(fig_sunburst, use_container_width=True)
-# 
-# with c4:
-#     st.subheader("Activity Decay Trajectory")
-#     decay_df = df_dash.groupby('tenure_cohort', observed=False)['session_duration_decay_ratio'].mean().reset_index()
-#     fig_decay = px.line(decay_df, x='tenure_cohort', y='session_duration_decay_ratio', markers=True)
-#     st.plotly_chart(fig_decay, use_container_width=True)
-
-model_df.to_csv('model_df.csv', index=False)
+# ----------------------------------------------------
+# 3. Summary Table Display
+# ----------------------------------------------------
+st.write("**24-Month Tenure Cohort Summary**")
+st.dataframe(summary_table, use_container_width=True)
 
