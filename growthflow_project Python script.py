@@ -24,18 +24,11 @@ def load_data():
     engagement_df = pd.read_csv('gfengagement_data.csv')
     return customers_df, status_df, usage_df, feedback_df, engagement_df
 
-# Create an in-memory sqlite database
-import sqlite3
-
-# Create or connect to an in-memory SQLite database
-conn = sqlite3.connect(':memory:')
-
-# Write DataFrames to SQLite tables
-customers_df.to_sql('gfcustomer_information', conn, index=False, if_exists='replace')
-status_df.to_sql('gfmonthly_status', conn, index=False, if_exists='replace')
-usage_df.to_sql('gfusage_data', conn, index=False, if_exists='replace')
-feedback_df.to_sql('gffeedback_data', conn, index=False, if_exists='replace')
-engagement_df.to_sql('gfengagement_data', conn, index=False, if_exists='replace')
+# Join tables
+model_df = customers_df.merge(status_df, on='customer_id', how='inner') \
+                       .merge(usage_df, on='customer_id', how='inner') \
+                       .merge(feedback_df, on='customer_id', how='inner') \
+                       .merge(engagement_df, on='customer_id', how='inner')
 
 print("✓ All 5 tables successfully written to SQLite database!")
 
