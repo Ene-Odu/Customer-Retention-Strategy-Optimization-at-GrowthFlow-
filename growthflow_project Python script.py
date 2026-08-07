@@ -15,26 +15,23 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
 
-
 @st.cache_data
-def load_and_merge_data():
-    # 1. Load individual datasets
+def load_all_data():
     customers_df = pd.read_csv('gfcustomer_information.csv')
     status_df = pd.read_csv('gfmonthly_status.csv')
     usage_df = pd.read_csv('gfusage_data.csv')
     feedback_df = pd.read_csv('gffeedback_data.csv')
     engagement_df = pd.read_csv('gfengagement_data.csv')
     
-    # 2. Merge all datasets on customer_id
     model_df = customers_df.merge(status_df, on='customer_id', how='inner') \
                            .merge(usage_df, on='customer_id', how='inner') \
                            .merge(feedback_df, on='customer_id', how='inner') \
                            .merge(engagement_df, on='customer_id', how='inner')
-    
-    return model_df
+                           
+    return customers_df, status_df, usage_df, feedback_df, engagement_df, model_df
 
-# Call the cached function to generate model_df
-model_df = load_and_merge_data()
+# Unpack everything so 'customers_df', 'status_df', etc. exist for line 41
+customers_df, status_df, usage_df, feedback_df, engagement_df, model_df = load_all_data()
 
 # Dataset Overview
 
