@@ -13,7 +13,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import sqlite3
 
 
 # Load Data
@@ -26,14 +25,17 @@ def load_data():
     return customers_df, status_df, usage_df, feedback_df, engagement_df
 
 # Create an in-memory sqlite database
-conn =sqlite3.connect(':memory')
+import sqlite3
 
-#write each df to a real sql table
-customers_df.to_sql('gfcustomer_information',conn,index= False, if_exists ='replace')
-status_df.to_sql('gfmonthly_status', conn,index= False, if_exists ='replace')
-usage_df.to_sql('gfusage_data',conn,index= False, if_exists ='replace')
-feedback_df.to_sql('gffeedback_data',conn,index= False, if_exists ='replace')
-engagement_df.to_sql('gfengagement_data',conn,index= False, if_exists ='replace')
+# Create or connect to an in-memory SQLite database
+conn = sqlite3.connect(':memory:')
+
+# Write DataFrames to SQLite tables
+customers_df.to_sql('gfcustomer_information', conn, index=False, if_exists='replace')
+status_df.to_sql('gfmonthly_status', conn, index=False, if_exists='replace')
+usage_df.to_sql('gfusage_data', conn, index=False, if_exists='replace')
+feedback_df.to_sql('gffeedback_data', conn, index=False, if_exists='replace')
+engagement_df.to_sql('gfengagement_data', conn, index=False, if_exists='replace')
 
 print("✓ All 5 tables successfully written to SQLite database!")
 
